@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# notes — inotes — Apple Notes CLI (imsg/mailapp pattern). MCP: apple-notes-mcp
+# inotes — Apple Notes CLI (imsg / imail / wa family). MCP: apple-notes-mcp
 set -euo pipefail
 
 cmd="${1:-}"
@@ -7,13 +7,13 @@ shift || true
 
 usage() {
   cat <<'EOF'
-notes — inotes — Apple Notes CLI (+ MCP via apple-notes-mcp)
+inotes — Apple Notes CLI (+ MCP via apple-notes-mcp)
 
-  notes doctor
-  notes list [--limit N]
-  notes search QUERY [--limit N]
-  notes show TITLE
-  notes create --title STR [--body STR] [--folder STR]
+  inotes doctor
+  inotes list [--limit N]
+  inotes search QUERY [--limit N]
+  inotes show TITLE
+  inotes create --title STR [--body STR] [--folder STR]
 
 Agent tip: prefer CLI to save tokens; use MCP apple-notes when needed.
 EOF
@@ -29,7 +29,7 @@ doctor() {
     exit 1
   fi
   echo "ok: Notes.app reachable"
-  echo "mcp: apple-notes-mcp (community) — also in tool registry"
+  echo "mcp: apple-notes-mcp — also in tool registry"
 }
 
 list_notes() {

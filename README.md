@@ -1,19 +1,18 @@
-# notes — inotes — Apple Notes CLI (+ MCP)
+# inotes — Apple Notes CLI (+ MCP)
 
-imsg-style local tool for **Notes.app**.
+**imsg-style** local Notes tool. Name family: `imsg` · `imail` · `inotes` · `wa`.
 
 | Surface | Binary | When |
 |---------|--------|------|
-| **CLI (prefer)** | `notes` | list/search/show/create — saves tokens |
-| **MCP** | `apple-notes-mcp` | rich tool use in Cursor/Claude |
-
-Community MCP: [sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp) (~76★, CRUD).
+| **CLI (prefer)** | `inotes` | list/search/show/create — saves tokens |
+| **MCP** | `apple-notes-mcp` | rich CRUD in agents |
 
 ```bash
-notes doctor
-notes list --limit 20
-notes search "standup"
-notes create --title "Idea" --body "…"
+inotes doctor
+inotes list --limit 20
+inotes search "standup"
+inotes create --title "Idea" --body "…"
 ```
 
-Permissions: Automation → allow Terminal/Cursor to control Notes.
+MCP: [sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp).  
+Permissions: Automation → Notes.
