@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# notes — Apple Notes CLI (imsg/mailapp pattern). MCP: apple-notes-mcp
+set -euo pipefail
+
+cmd="${1:-}"
+shift || true
+
+usage() {
+  cat <<'EOF'
+notes — Apple Notes CLI (+ MCP via apple-notes-mcp)
+
+  notes doctor
+  notes list [--limit N]
+  notes search QUERY [--limit N]
+  notes show TITLE
+  notes create --title STR [--body STR] [--folder STR]
+
+Agent tip: prefer CLI to save tokens; use MCP apple-notes when needed.
+EOF
+}
+
+as_escape() {
+  python3 -c 'import sys; print(sys.stdin.read().replace("\\","\\\\").replace("\"","\\\""))' <<<"$1"
+}
+
+doctor() {
+  if ! osascript -e 'tell application "Notes" to get name' >/dev/null 2>&1; then
+    echo "FAIL: cannot talk to Notes.app (grant Automation)" >&2
+    exit 1
+  fi
+  echo "ok: Notes.app reachable"
+  echo "mcp: apple-notes-mcp (community) — also in tool registry"
+}
+
+list_notes() {
+  local limit=20
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --limit|-n) limit="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  osascript - "$limit" <<'APPLESCRIPT'
+on run argv
+  set lim to (item 1 of argv) as integer
+  set out to ""
+  tell application "Notes"
+    set nlist to notes
+    set n to count of nlist
+    if n > lim then set n to lim
+    repeat with i from 1 to n
+      set noteRef to item i of nlist
+      set out to out & (name of noteRef) & linefeed
+    end repeat
+  end tell
+  return out
+end run
+APPLESCRIPT
+}
+
+search_notes() {
+  local q="${1:-}"
+  [[ -n "$q" ]] || { echo "need query" >&2; exit 2; }
+  shift || true
+  local limit=20
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --limit|-n) limit="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  local qe
+  qe=$(as_escape "$q")
+  osascript - "$qe" "$limit" <<'APPLESCRIPT'
+on run argv
+  set q to item 1 of argv
+  set lim to (item 2 of argv) as integer
+  set out to ""
+  set countFound to 0
+  tell application "Notes"
+    repeat with noteRef in notes
+      if countFound ≥ lim then exit repeat
+      set nm to name of noteRef
+      set bodyText to ""
+      try
+        set bodyText to plaintext of noteRef
+      end try
+      if nm contains q or bodyText contains q then
+        set out to out & nm & linefeed
+        set countFound to countFound + 1
+      end if
+    end repeat
+  end tell
+  return out
+end run
+APPLESCRIPT
+}
+
+show_note() {
+  local title="${1:-}"
+  [[ -n "$title" ]] || { echo "need title" >&2; exit 2; }
+  local te
+  te=$(as_escape "$title")
+  osascript <<APPLESCRIPT
+tell application "Notes"
+  set noteRef to first note whose name is "$te"
+  return (name of noteRef) & linefeed & linefeed & (plaintext of noteRef)
+end tell
+APPLESCRIPT
+}
+
+create_note() {
+  local title="" body="" folder=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) title="$2"; shift 2 ;;
+      --body) body="$2"; shift 2 ;;
+      --folder) folder="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ -n "$title" ]] || { echo "need --title" >&2; exit 2; }
+  local te be fe
+  te=$(as_escape "$title")
+  be=$(as_escape "$body")
+  fe=$(as_escape "$folder")
+  osascript <<APPLESCRIPT
+tell application "Notes"
+  if "$fe" is not "" then
+    tell folder "$fe"
+      make new note with properties {name:"$te", body:"$be"}
+    end tell
+  else
+    make new note with properties {name:"$te", body:"$be"}
+  end if
+end tell
+return "OK created: $te"
+APPLESCRIPT
+}
+
+case "$cmd" in
+  doctor) doctor ;;
+  list) list_notes "$@" ;;
+  search) search_notes "$@" ;;
+  show) show_note "$@" ;;
+  create) create_note "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) echo "unknown: $cmd" >&2; usage; exit 2 ;;
+esac
