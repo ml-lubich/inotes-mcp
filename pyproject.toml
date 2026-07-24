@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "inotes-client"
+name = "inotes-mcp"
 version = "0.1.1"
-description = "inotes-client — Apple Notes CLI + agent schema (Typer). Binary: inotes"
+description = "inotes-mcp — Apple Notes CLI (inotes) + MCP-friendly agent schema. Typer."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -29,7 +29,7 @@ Repository = "https://github.com/ml-lubich/inotes"
 inotes = "inotes.cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov>=6.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inotes"]
@@ -37,3 +37,4 @@ packages = ["src/inotes"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "--cov=inotes --cov-report=term-missing --cov-fail-under=90"
