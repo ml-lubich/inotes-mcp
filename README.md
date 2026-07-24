@@ -1,4 +1,4 @@
-# notes — Apple Notes CLI (+ MCP)
+# notes — inotes — Apple Notes CLI (+ MCP)
 
 imsg-style local tool for **Notes.app**.
 

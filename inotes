@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# notes — Apple Notes CLI (imsg/mailapp pattern). MCP: apple-notes-mcp
+# notes — inotes — Apple Notes CLI (imsg/mailapp pattern). MCP: apple-notes-mcp
 set -euo pipefail
 
 cmd="${1:-}"
@@ -7,7 +7,7 @@ shift || true
 
 usage() {
   cat <<'EOF'
-notes — Apple Notes CLI (+ MCP via apple-notes-mcp)
+notes — inotes — Apple Notes CLI (+ MCP via apple-notes-mcp)
 
   notes doctor
   notes list [--limit N]
