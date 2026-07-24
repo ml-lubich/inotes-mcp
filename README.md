@@ -1,5 +1,8 @@
 # inotes — Apple Notes CLI (+ MCP)
 
+**Package brand:** `inotes-client` · **CLI:** `inotes` · **PyPI today:** `pip install mac-inotes` (renaming to `inotes-client` when PyPI new-project limit clears).
+
+
 **imsg-style** local Notes tool. Name family: `imsg` · `imail` · `inotes` · `wa`.
 
 | Surface | Binary | When |
