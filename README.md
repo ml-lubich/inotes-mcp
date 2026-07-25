@@ -1,64 +1,121 @@
-# inotes — Apple Notes CLI (+ MCP)
+# inotes — Apple Notes CLI
 
-**Package brand:** `inotes-mcp` · **CLI:** `inotes` · **PyPI today:** `pip install mac-inotes` (renaming to `inotes-mcp` when PyPI new-project limit clears).
+`inotes` is a fast, scriptable command line for **Apple Notes** — list, search,
+show, and create notes from your terminal, with a `--json` flag for scripts
+and agents. Part of the `imsg` / `imail` / `inotes` / `wa` local-first tool
+family.
 
+```bash
+inotes list --limit 20
+inotes search "standup" --json
+inotes create --title "Idea" --body "…"
+```
 
-**imsg-style** local Notes tool. Name family: `imsg` · `imail` · `inotes` · `wa`.
+---
 
-| Surface | Binary | When |
-|---------|--------|------|
-| **CLI (prefer)** | `inotes` | list/search/show/create — saves tokens |
-| **MCP** | `apple-notes-mcp` | rich CRUD in agents |
+## macOS only
+
+`inotes` drives **Notes.app** through AppleScript (`osascript`), which only
+exists on macOS. There is no Linux or Windows build, and none is planned —
+the tool has nothing to talk to without Notes.app.
+
+---
 
 ## Install
 
-**pip (editable dev):**
+```bash
+# Homebrew
+brew install ml-lubich/tap/inotes
+
+# pip
+pip install inotes-mcp
+
+# from a clone
+git clone https://github.com/ml-lubich/inotes.git
+cd inotes
+uv tool install .
+```
+
+> The PyPI/Homebrew package is `inotes-mcp`; the installed command is always
+> `inotes`.
+
+## Permissions
+
+`inotes` needs Automation access to Notes.app. The first time it runs a
+command, macOS will prompt you to allow it — or grant it up front in
+**System Settings → Privacy & Security → Automation** (allow your terminal
+app to control Notes). Verify it's working with:
+
+```bash
+inotes doctor
+```
+
+---
+
+## Quick start
+
+```bash
+inotes doctor                                        # verify Notes.app access
+inotes list --limit 20                               # recent note titles
+inotes list --json                                    # {"notes": [...]}
+inotes search "standup" --limit 10 --json             # search titles + bodies
+inotes show "My Note"                                 # exact-title lookup
+inotes create --title "Idea" --body "…"               # new note
+inotes create --title "Work" --body "…" --folder "Projects"
+inotes version
+inotes -h                                             # help at every level
+```
+
+`show` requires an exact note title match. `create --folder` targets a named
+folder; omit it to use the default account.
+
+---
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `doctor` | Verify Notes.app Automation access |
+| `list` | List recent note titles (`--limit`, `--json`) |
+| `search` | Search note titles and bodies (`--limit`, `--json`) |
+| `show` | Show a note by exact title |
+| `create` | Create a note (`--title`, `--body`, `--folder`) |
+| `version` | Print the installed version |
+| `agent schema` | Print a JSON command contract (version, tool, params per command) |
+| `agent guide` | Print a markdown playbook for LLM agents |
+
+Help is available at every level: `inotes -h`, `inotes <command> -h`,
+`inotes agent -h`.
+
+---
+
+## Using inotes from an agent
+
+`inotes` is CLI-first by design — cheaper on tokens than a full MCP round
+trip for the common case of list/search/show/create. `inotes agent schema`
+gives an agent a machine-readable contract of every command and its
+parameters; `inotes agent guide` gives it a short playbook (the same rules
+documented above: run `doctor` first, `--json` on `list`/`search`, exit code
+0 on success).
+
+For richer CRUD than this CLI's surface covers, pair `inotes` with
+[sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp), a full
+MCP server for Apple Notes.
+
+---
+
+## Development
 
 ```bash
 git clone https://github.com/ml-lubich/inotes.git
 cd inotes
 python3 -m pip install -e ".[dev]"
-```
-
-**Homebrew (when published):**
-
-```bash
-brew install ml-lubich/tap/inotes
-```
-
-Requires macOS with Notes.app. Grant **Automation → Notes** when prompted.
-
-## Usage
-
-```bash
-inotes doctor
-inotes list --limit 20
-inotes list --json
-inotes search "standup" --limit 10 --json
-inotes show "My Note"
-inotes create --title "Idea" --body "…"
-inotes create --title "Work" --body "…" --folder "Projects"
-inotes version
-inotes -h
-```
-
-## Agents
-
-CLI-first — use MCP only when you need operations beyond this surface.
-
-```bash
-inotes agent schema   # JSON command contract (version, tool, params)
-inotes agent guide    # markdown playbook
-```
-
-Pair with [sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp) for full MCP tooling.
-
-## Development
-
-```bash
-python3 -m pip install -e ".[dev]"
 pytest -q
 inotes -h
 ```
 
-Legacy bash implementation preserved as `inotes.bash.bak`.
+A legacy bash implementation is preserved as `inotes.bash.bak` for reference.
+
+---
+
+MIT License · Copyright (c) 2026 Misha Lubich ([ml-lubich](https://github.com/ml-lubich))
