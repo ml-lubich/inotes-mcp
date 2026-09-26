@@ -27,6 +27,7 @@ app = typer.Typer(
     help="Apple Notes CLI — list, search, show, create. Built for humans and agents.",
     epilog=EPILOG,
     no_args_is_help=True,
+    invoke_without_command=True,
     rich_markup_mode="rich",
     context_settings={"help_option_names": ["-h", "--help"]},
 )

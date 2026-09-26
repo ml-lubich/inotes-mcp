@@ -13,6 +13,34 @@ class TestAsEscape:
     def test_escapes_backslash_and_quotes(self) -> None:
         assert notes._as_escape('a\\b"c') == 'a\\\\b\\"c'
 
+    def test_empty_string_passes_through(self) -> None:
+        assert notes._as_escape("") == ""
+
+    def test_whitespace_only_passes_through(self) -> None:
+        assert notes._as_escape("   \t  ") == "   \t  "
+
+    def test_unicode_emoji_passes_through_unescaped(self) -> None:
+        # _as_escape only targets backslash/quote; AppleScript string literals
+        # don't need extra escaping for unicode, so this should be a no-op.
+        text = "café \U0001f600 אבג"  # café, emoji, RTL Hebrew
+        assert notes._as_escape(text) == text
+
+    def test_zero_width_and_control_chars_pass_through(self) -> None:
+        text = "a​b‍c"  # zero-width space / joiner
+        assert notes._as_escape(text) == text
+
+    def test_backslash_quote_injection_attempt_is_neutralized(self) -> None:
+        # A string crafted to close the AppleScript string literal and inject
+        # another statement must come out fully escaped, not broken open.
+        payload = '"; tell application "Finder" to activate --'
+        escaped = notes._as_escape(payload)
+        assert escaped == '\\"; tell application \\"Finder\\" to activate --'
+        # no bare, unescaped quote remains that could terminate the literal
+        assert escaped.replace('\\"', "").count('"') == 0
+
+    def test_repeated_backslash_quote_sequences(self) -> None:
+        assert notes._as_escape('\\"\\"') == '\\\\\\"\\\\\\"'
+
 
 class TestRunOsascript:
     def test_returns_stdout_stripped(self) -> None:
@@ -45,6 +73,30 @@ class TestSplitLines:
     def test_filters_empty_lines(self) -> None:
         assert notes._split_lines("a\n\nb\n") == ["a", "b"]
 
+    def test_whitespace_only_line_is_kept(self) -> None:
+        # A line of only spaces is truthy in Python, so it survives the
+        # blank-line filter (only literally-empty lines are dropped).
+        assert notes._split_lines("a\n   \nb\n") == ["a", "   ", "b"]
+
+    def test_KNOWN_LIMITATION_newline_in_title_is_mis_split(self) -> None:
+        """Documents a real, unfixed limitation — not a passing spec.
+
+        list_notes/search_notes join note titles with `linefeed` in the
+        AppleScript layer, so a note whose *title* itself contains a literal
+        newline is indistinguishable from two separate notes once it reaches
+        `_split_lines`. Fixing this needs a different IPC delimiter in the
+        AppleScript scripts in notes.py (e.g. NUL or a rare sentinel), which
+        is a behavior change beyond a one-line patch, so it is left as-is.
+        This test locks in the *current* (buggy) behavior so a future change
+        to the delimiter scheme is a deliberate, visible diff here.
+        """
+        raw_output_for_one_note_titled_two_lines = "Note\nTitle\nOther Note\n"
+        assert notes._split_lines(raw_output_for_one_note_titled_two_lines) == [
+            "Note",
+            "Title",
+            "Other Note",
+        ]
+
 
 class TestDoctor:
     def test_returns_status_lines(self) -> None:
@@ -60,6 +112,27 @@ class TestListNotes:
             items = notes.list_notes(limit=10)
         assert items == ["Note A", "Note B"]
 
+    def test_zero_limit_passed_through_as_string(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="") as mock_run:
+            items = notes.list_notes(limit=0)
+        assert items == []
+        assert mock_run.call_args[0][1:] == ("0",)
+
+    def test_negative_limit_passed_through_as_string(self) -> None:
+        # AppleScript's `if n > lim` makes any negative lim behave like 0
+        # notes returned; this locks in that the Python layer doesn't reject
+        # or mangle a negative value before it reaches osascript.
+        with patch.object(notes, "_run_osascript", return_value="") as mock_run:
+            items = notes.list_notes(limit=-1)
+        assert items == []
+        assert mock_run.call_args[0][1:] == ("-1",)
+
+    def test_huge_limit_passed_through_as_string(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="Note A\n") as mock_run:
+            items = notes.list_notes(limit=10_000_000)
+        assert items == ["Note A"]
+        assert mock_run.call_args[0][1:] == ("10000000",)
+
 
 class TestSearchNotes:
     def test_parses_search_results(self) -> None:
@@ -68,6 +141,28 @@ class TestSearchNotes:
         assert items == ["Match 1"]
         assert mock_run.call_args[0][1:] == ("standup", "5")
 
+    def test_zero_limit_returns_no_matches(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="") as mock_run:
+            items = notes.search_notes("q", limit=0)
+        assert items == []
+        assert mock_run.call_args[0][1:] == ("q", "0")
+
+    def test_unicode_emoji_rtl_query_reaches_osascript_unescaped(self) -> None:
+        query = "café \U0001f600 אב"
+        with patch.object(notes, "_run_osascript", return_value="") as mock_run:
+            notes.search_notes(query, limit=5)
+        assert mock_run.call_args[0][1] == query
+
+    def test_html_body_in_query_is_not_escaped_specially(self) -> None:
+        # notes.py has no HTML-awareness; a query containing markup should
+        # travel through as an ordinary string, unmodified beyond _as_escape
+        # (search_notes doesn't even escape the query — it's passed as an
+        # osascript CLI argv item, not embedded into the script text).
+        query = '<b>bold</b> & "quoted"'
+        with patch.object(notes, "_run_osascript", return_value="") as mock_run:
+            notes.search_notes(query, limit=5)
+        assert mock_run.call_args[0][1] == query
+
 
 class TestShowNote:
     def test_escapes_title_in_script(self) -> None:
@@ -75,6 +170,29 @@ class TestShowNote:
             text = notes.show_note('Say "hi"')
         assert text == "Title\n\nBody"
         assert '\\"hi\\"' in mock_run.call_args[0][0]
+
+    def test_empty_title_still_produces_a_valid_script(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="") as mock_run:
+            notes.show_note("")
+        assert 'name is ""' in mock_run.call_args[0][0]
+
+    def test_unicode_emoji_rtl_title_embedded_unescaped(self) -> None:
+        title = "café \U0001f600 אב"
+        with patch.object(notes, "_run_osascript", return_value="ok") as mock_run:
+            notes.show_note(title)
+        assert f'name is "{title}"' in mock_run.call_args[0][0]
+
+    def test_very_long_title_is_not_truncated(self) -> None:
+        title = "x" * 10_000
+        with patch.object(notes, "_run_osascript", return_value="ok") as mock_run:
+            notes.show_note(title)
+        assert f'name is "{title}"' in mock_run.call_args[0][0]
+
+    def test_returns_body_with_embedded_html_verbatim(self) -> None:
+        body_with_html = "Title\n\n<div>note</div> & <script>x</script>"
+        with patch.object(notes, "_run_osascript", return_value=body_with_html):
+            text = notes.show_note("Title")
+        assert text == body_with_html
 
 
 class TestCreateNote:
@@ -91,3 +209,54 @@ class TestCreateNote:
             notes.create_note("T", body="B", folder="Projects")
         script = mock_run.call_args[0][0]
         assert 'tell folder "Projects"' in script
+
+    def test_empty_title_and_body_still_creates(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK created: ") as mock_run:
+            notes.create_note("", body="")
+        script = mock_run.call_args[0][0]
+        assert 'name:""' in script and 'body:""' in script
+
+    def test_unicode_emoji_title_and_body(self) -> None:
+        title = "\U0001f680 launch"
+        body = "café notes אב"
+        with patch.object(notes, "_run_osascript", return_value=f"OK created: {title}") as mock_run:
+            notes.create_note(title, body=body)
+        script = mock_run.call_args[0][0]
+        assert title in script and body in script
+
+    def test_newline_in_body_is_preserved_literally(self) -> None:
+        body = "line1\nline2\nline3"
+        with patch.object(notes, "_run_osascript", return_value="OK created: T") as mock_run:
+            notes.create_note("T", body=body)
+        script = mock_run.call_args[0][0]
+        assert body in script
+
+    def test_html_in_body_is_stored_verbatim(self) -> None:
+        body = "<b>bold</b> & <script>alert(1)</script>"
+        with patch.object(notes, "_run_osascript", return_value="OK created: T") as mock_run:
+            notes.create_note("T", body=body)
+        assert body in mock_run.call_args[0][0]
+
+    def test_folder_name_with_slash_is_escaped_not_split(self) -> None:
+        # A folder name containing a path-like separator must still be
+        # treated as one literal AppleScript string, not a nested path.
+        with patch.object(notes, "_run_osascript", return_value="OK created: T") as mock_run:
+            notes.create_note("T", body="B", folder="Work/2026 Projects")
+        script = mock_run.call_args[0][0]
+        assert 'tell folder "Work/2026 Projects"' in script
+
+    def test_quote_and_backslash_in_folder_name_is_escaped(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK created: T") as mock_run:
+            notes.create_note("T", body="B", folder='Say "hi"\\bye')
+        script = mock_run.call_args[0][0]
+        assert 'tell folder "Say \\"hi\\"\\\\bye"' in script
+
+    def test_injection_attempt_in_title_is_neutralized(self) -> None:
+        payload = '"; tell application "Finder" to activate --'
+        with patch.object(notes, "_run_osascript", return_value="OK created: x") as mock_run:
+            notes.create_note(payload, body="B")
+        script = mock_run.call_args[0][0]
+        # the raw, unescaped payload must not appear verbatim inside the
+        # `name:"..."` literal — only its escaped form should.
+        assert f'name:"{payload}"' not in script
+        assert notes._as_escape(payload) in script

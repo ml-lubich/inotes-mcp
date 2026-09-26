@@ -46,7 +46,7 @@ def test_agent_schema_json() -> None:
     result = runner.invoke(app, ["agent", "schema"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["version"] == "0.1.0"
+    assert payload["version"] == "0.1.1"
     assert payload["tool"] == "inotes"
     commands = payload["commands"]
     assert isinstance(commands, dict)

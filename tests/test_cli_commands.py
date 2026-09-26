@@ -31,6 +31,19 @@ class TestMainCallback:
         assert result.exit_code in (0, 2)
         assert "Usage:" in result.output or "inotes" in result.output
 
+    def test_version_flag_real_invocation(self) -> None:
+        # Regression: without invoke_without_command=True on the Typer app,
+        # `inotes -V` (an eager option with no subcommand) fails with
+        # "Missing command." instead of printing the version and exiting 0.
+        result = runner.invoke(app, ["-V"])
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == "0.1.1"
+
+    def test_long_version_flag_real_invocation(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == "0.1.1"
+
     def test_callback_help_when_no_subcommand(self) -> None:
         import typer
         from unittest.mock import MagicMock
@@ -169,3 +182,102 @@ class TestRunEntry:
         with patch("inotes.cli.app") as mock_app:
             run()
         mock_app.assert_called_once()
+
+
+class TestBadArgExitCodes:
+    """Missing/invalid required args must fail with click's usage exit code (2),
+    not crash with a traceback or silently succeed."""
+
+    def test_create_without_title_is_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["create", "--body", "no title given"])
+        assert result.exit_code == 2
+
+    def test_search_without_query_is_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["search"])
+        assert result.exit_code == 2
+
+    def test_show_without_title_is_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["show"])
+        assert result.exit_code == 2
+
+    def test_unknown_option_is_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["list", "--not-a-real-flag"])
+        assert result.exit_code == 2
+
+    def test_unknown_subcommand_is_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["not-a-real-command"])
+        assert result.exit_code == 2
+
+    def test_list_limit_not_an_integer_is_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["list", "--limit", "not-a-number"])
+        assert result.exit_code == 2
+
+
+class TestLimitEdgeCasesAtCliLevel:
+    def test_list_limit_zero(self) -> None:
+        with patch("inotes.cli.notes.list_notes", return_value=[]) as mock_list:
+            result = runner.invoke(app, ["list", "--limit", "0"])
+        assert result.exit_code == 0
+        mock_list.assert_called_once_with(limit=0)
+
+    def test_list_negative_limit_reaches_notes_layer_unmodified(self) -> None:
+        with patch("inotes.cli.notes.list_notes", return_value=[]) as mock_list:
+            result = runner.invoke(app, ["list", "--limit", "-1"])
+        assert result.exit_code == 0
+        mock_list.assert_called_once_with(limit=-1)
+
+    def test_search_huge_limit(self) -> None:
+        with patch("inotes.cli.notes.search_notes", return_value=[]) as mock_search:
+            result = runner.invoke(app, ["search", "q", "--limit", "10000000"])
+        assert result.exit_code == 0
+        mock_search.assert_called_once_with("q", limit=10_000_000)
+
+
+class TestNoColorEnvVar:
+    """NO_COLOR must not change exit codes or break output parsing —
+    only styling."""
+
+    def test_help_exit_code_unaffected_by_no_color(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NO_COLOR", "1")
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "Usage:" in result.output
+
+    def test_json_output_still_valid_json_with_no_color(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NO_COLOR", "1")
+        with patch("inotes.cli.notes.list_notes", return_value=["Note A"]):
+            result = runner.invoke(app, ["list", "--json"])
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {"notes": ["Note A"]}
+
+
+class TestUnicodeAndInjectionArgsAtCliLevel:
+    """The CLI layer itself does no validation/escaping of note content —
+    confirm arbitrary text (unicode, quotes, newlines) flows through to the
+    notes backend unchanged, and back out unchanged."""
+
+    def test_create_with_unicode_title_and_body(self) -> None:
+        title = "\U0001f680 café אב"
+        with patch(
+            "inotes.cli.notes.create_note", return_value=f"OK created: {title}"
+        ) as mock_create:
+            result = runner.invoke(app, ["create", "--title", title, "--body", "hi"])
+        assert result.exit_code == 0
+        mock_create.assert_called_once_with(title, body="hi", folder="")
+        assert title in result.output
+
+    def test_search_with_quotes_and_backslashes(self) -> None:
+        query = 'say "hi"\\bye'
+        with patch("inotes.cli.notes.search_notes", return_value=["Hit"]) as mock_search:
+            result = runner.invoke(app, ["search", query])
+        assert result.exit_code == 0
+        mock_search.assert_called_once_with(query, limit=20)
+
+    def test_show_title_with_embedded_newline_argument(self) -> None:
+        title = "Line1\nLine2"
+        with patch("inotes.cli.notes.show_note", return_value="body") as mock_show:
+            result = runner.invoke(app, ["show", title])
+        assert result.exit_code == 0
+        mock_show.assert_called_once_with(title)

@@ -31,8 +31,8 @@ brew install ml-lubich/tap/inotes
 pip install inotes-mcp
 
 # from a clone
-git clone https://github.com/ml-lubich/inotes.git
-cd inotes
+git clone https://github.com/ml-lubich/inotes-mcp.git
+cd inotes-mcp
 uv tool install .
 ```
 
@@ -81,6 +81,7 @@ folder; omit it to use the default account.
 | `show` | Show a note by exact title |
 | `create` | Create a note (`--title`, `--body`, `--folder`) |
 | `version` | Print the installed version |
+| `mcp` | Run the built-in MCP server over stdio |
 | `agent schema` | Print a JSON command contract (version, tool, params per command) |
 | `agent guide` | Print a markdown playbook for LLM agents |
 
@@ -98,17 +99,35 @@ parameters; `inotes agent guide` gives it a short playbook (the same rules
 documented above: run `doctor` first, `--json` on `list`/`search`, exit code
 0 on success).
 
+### Built-in MCP server
+
+`inotes mcp` runs a stdio MCP server exposing the same five operations
+(`doctor`, `list_notes`, `search_notes`, `show_note`, `create_note`) as MCP
+tools — no separate package needed. Point any MCP client at the installed
+`inotes` command:
+
+```json
+{
+  "mcpServers": {
+    "inotes": {
+      "command": "inotes",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 For richer CRUD than this CLI's surface covers, pair `inotes` with
 [sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp), a full
-MCP server for Apple Notes.
+third-party MCP server for Apple Notes.
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/ml-lubich/inotes.git
-cd inotes
+git clone https://github.com/ml-lubich/inotes-mcp.git
+cd inotes-mcp
 python3 -m pip install -e ".[dev]"
 pytest -q
 inotes -h
