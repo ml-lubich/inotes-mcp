@@ -42,6 +42,21 @@ def test_cli_help(args: list[str]) -> None:
     assert "Usage:" in result.output or "inotes" in result.output
 
 
+def test_root_help_hides_generated_completion_options() -> None:
+    for flag in ("-h", "--help"):
+        result = runner.invoke(app, [flag])
+        assert result.exit_code == 0
+        assert "--install-completion" not in result.output
+        assert "--show-completion" not in result.output
+
+
+@pytest.mark.parametrize("flag", ["-V", "--version"])
+def test_root_version_shortcuts(flag: str) -> None:
+    result = runner.invoke(app, [flag])
+    assert result.exit_code == 0
+    assert "0.1.1" in result.output
+
+
 def test_agent_schema_json() -> None:
     result = runner.invoke(app, ["agent", "schema"])
     assert result.exit_code == 0, result.output

@@ -89,6 +89,12 @@ class TestListCmd:
         assert result.exit_code == 0
         assert json.loads(result.output) == {"notes": ["Note A"]}
 
+    def test_list_json_short_flag(self) -> None:
+        with patch("inotes.cli.notes.list_notes", return_value=["Note A"]):
+            result = runner.invoke(app, ["list", "-j"])
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {"notes": ["Note A"]}
+
     def test_list_failure(self) -> None:
         with patch(
             "inotes.cli.notes.list_notes",

@@ -1,7 +1,7 @@
 # inotes — Apple Notes CLI
 
 `inotes` is a fast, scriptable command line for **Apple Notes** — list, search,
-show, and create notes from your terminal, with a `--json` flag for scripts
+show, and create notes from your terminal, with `-j`/`--json` flags for scripts
 and agents. Part of the `imsg` / `imail` / `inotes` / `wa` local-first tool
 family.
 
@@ -57,7 +57,7 @@ inotes doctor
 ```bash
 inotes doctor                                        # verify Notes.app access
 inotes list --limit 20                               # recent note titles
-inotes list --json                                    # {"notes": [...]}
+inotes list -j                                        # {"notes": [...]}
 inotes search "standup" --limit 10 --json             # search titles + bodies
 inotes show "My Note"                                 # exact-title lookup
 inotes create --title "Idea" --body "…"               # new note
@@ -97,7 +97,8 @@ trip for the common case of list/search/show/create. `inotes agent schema`
 gives an agent a machine-readable contract of every command and its
 parameters; `inotes agent guide` gives it a short playbook (the same rules
 documented above: run `doctor` first, `--json` on `list`/`search`, exit code
-0 on success).
+0 on success). Root and agent help only render command usage; they do not
+contact Notes.app. Notes automation runs only when a Notes command is invoked.
 
 ### Built-in MCP server
 

@@ -8,7 +8,7 @@ from typing import Annotated
 
 import typer
 
-from inotes import __version__, agent, notes
+from inotes import __version__, notes
 
 EPILOG = """\
 Examples:
@@ -29,6 +29,7 @@ app = typer.Typer(
     no_args_is_help=True,
     invoke_without_command=True,
     rich_markup_mode="rich",
+    add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 agent_app = typer.Typer(
@@ -36,6 +37,7 @@ agent_app = typer.Typer(
     help="Machine-readable schema and playbook for LLM/automation use.",
     no_args_is_help=True,
     rich_markup_mode="rich",
+    add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 app.add_typer(agent_app, name="agent")
@@ -85,7 +87,7 @@ def doctor() -> None:
 @app.command("list")
 def list_cmd(
     limit: Annotated[int, typer.Option("--limit", "-n", help="Max notes to list.")] = 20,
-    as_json: Annotated[bool, typer.Option("--json", help="Emit JSON on stdout.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", "-j", help="Emit JSON on stdout.")] = False,
 ) -> None:
     """List recent note titles."""
     try:
@@ -99,7 +101,7 @@ def list_cmd(
 def search_cmd(
     query: Annotated[str, typer.Argument(help="Search query.")],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Max matches.")] = 20,
-    as_json: Annotated[bool, typer.Option("--json", help="Emit JSON on stdout.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", "-j", help="Emit JSON on stdout.")] = False,
 ) -> None:
     """Search note titles and bodies."""
     try:
@@ -151,12 +153,16 @@ def mcp_cmd() -> None:
 @agent_app.command("schema")
 def agent_schema_cmd() -> None:
     """Print JSON command contract for agents."""
+    from inotes import agent
+
     typer.echo(json.dumps(agent.build_schema(), indent=2))
 
 
 @agent_app.command("guide")
 def agent_guide_cmd() -> None:
     """Print a short markdown playbook for LLM agents."""
+    from inotes import agent
+
     sys.stdout.write(agent.build_guide())
 
 
