@@ -24,6 +24,7 @@ class AmbiguousNoteTitleError(NotesError):
 _PLAIN_URL = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}"
 _LINK_SCHEMES = {"http", "https", "mailto", "tel"}
+_OSASCRIPT_TIMEOUT_SECONDS = 180
 
 
 class _NoteLinkParser(HTMLParser):
@@ -67,7 +68,12 @@ def _run_osascript(script: str, *argv: str) -> str:
             text=True,
             capture_output=True,
             check=False,
+            timeout=_OSASCRIPT_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise NotesError(
+            f"Notes automation timed out after {_OSASCRIPT_TIMEOUT_SECONDS} seconds."
+        ) from exc
     except OSError as exc:
         raise NotesError(str(exc)) from exc
     if result.returncode != 0:
@@ -222,10 +228,14 @@ tell application "Notes"
   set recordSeparator to ASCII character 30
   set fieldSeparator to ASCII character 31
   set outputText to ""
-  repeat with noteRef in every note
-    set noteTitle to name of noteRef as text
-    set noteID to id of noteRef as text
-    set noteBody to body of noteRef as text
+  set allNotes to every note
+  set noteTitles to name of allNotes
+  set noteIDs to id of allNotes
+  set noteBodies to body of allNotes
+  repeat with noteIndex from 1 to count of allNotes
+    set noteTitle to item noteIndex of noteTitles as text
+    set noteID to item noteIndex of noteIDs as text
+    set noteBody to item noteIndex of noteBodies as text
     if outputText is not "" then set outputText to outputText & recordSeparator
     set outputText to outputText & noteTitle & fieldSeparator & noteID & fieldSeparator & noteBody
   end repeat

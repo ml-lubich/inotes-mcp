@@ -65,6 +65,15 @@ class TestRunOsascript:
             with pytest.raises(notes.NotesError, match="no osascript"):
                 notes._run_osascript("script")
 
+    def test_times_out_stalled_osascript(self) -> None:
+        with patch(
+            "inotes.notes.subprocess.run",
+            side_effect=notes.subprocess.TimeoutExpired("osascript", 180),
+        ) as run:
+            with pytest.raises(notes.NotesError, match="timed out after 180 seconds"):
+                notes._run_osascript("script")
+        assert run.call_args.kwargs["timeout"] == 180
+
 
 class TestSplitLines:
     def test_returns_empty_for_blank_input(self) -> None:
@@ -458,7 +467,8 @@ class TestNoteLinks:
             {"note_title": "Second note", "label": "Same", "url": "https://same.test"},
         ]
         script = mock_run.call_args.args[0]
-        assert "body of noteRef" in script
+        assert "body of allNotes" in script
+        assert "repeat with noteIndex" in script
         assert "ASCII character 30" in script
         assert "ASCII character 31" in script
 
