@@ -425,3 +425,83 @@ class TestPinUnpinNote:
         with patch.object(notes, "_run_osascript", side_effect=notes.NotesError(message)):
             with pytest.raises(notes.NotesError, match="Accessibility"):
                 notes.unpin_note("Title")
+
+
+class TestNoteLinks:
+    def test_extracts_html_and_plain_links_with_labels_and_entities(self) -> None:
+        html = (
+            '<div><a href="https://example.test/path?a=1&amp;b=2">Example &amp; Docs</a></div>'
+            '<div>Plain https://plain.test/page). and <a href="mailto:help@example.test">email</a></div>'
+        )
+        rows = notes.extract_links_from_html(html, "Reference note")
+        assert rows == [
+            {"note_title": "Reference note", "label": "Example & Docs", "url": "https://example.test/path?a=1&b=2"},
+            {"note_title": "Reference note", "label": "https://plain.test/page", "url": "https://plain.test/page"},
+            {"note_title": "Reference note", "label": "email", "url": "mailto:help@example.test"},
+        ]
+
+    def test_deduplicates_same_note_url_but_keeps_source_note_attribution(self) -> None:
+        with patch.object(
+            notes,
+            "_run_osascript",
+            return_value=(
+                "First note" + chr(31) + "id-1" + chr(31)
+                + '<a href="https://same.test">Same</a><a href="https://same.test">Same</a>'
+                + chr(30)
+                + "Second note" + chr(31) + "id-2" + chr(31)
+                + '<a href="https://same.test">Same</a>'
+            ),
+        ) as mock_run:
+            rows = notes.list_note_links()
+        assert rows == [
+            {"note_title": "First note", "label": "Same", "url": "https://same.test"},
+            {"note_title": "Second note", "label": "Same", "url": "https://same.test"},
+        ]
+        script = mock_run.call_args.args[0]
+        assert "body of noteRef" in script
+        assert "ASCII character 30" in script
+        assert "ASCII character 31" in script
+
+
+class TestAttachments:
+    def test_attach_file_uses_exact_note_and_passes_path_as_argv(self, tmp_path) -> None:
+        file_path = tmp_path / "voice memo.wav"
+        file_path.write_bytes(b"test audio bytes")
+        result_payload = "OK_ATTACHMENT" + chr(31) + "attachment-id" + chr(31) + "voice memo.wav" + chr(31) + "Target note"
+        with patch.object(notes, "_run_osascript", return_value=result_payload) as mock_run:
+            result = notes.attach_file_to_note("Target note", str(file_path), folder="Work")
+        script = mock_run.call_args.args[0]
+        assert result == {"id": "attachment-id", "name": "voice memo.wav", "title": "Target note"}
+        assert 'name is "Target note"' in script
+        assert 'every folder whose name is "Work"' in script
+        assert script.index("count of matchingNotes") < script.index("make new attachment")
+        assert "make new attachment" in script and "with data" in script
+        assert str(file_path) not in script
+        assert mock_run.call_args.args[1:] == (str(file_path.resolve()),)
+
+    def test_attach_rejects_missing_or_directory_paths_before_notes(self, tmp_path) -> None:
+        with patch.object(notes, "_run_osascript") as mock_run:
+            with pytest.raises(ValueError, match="regular file"):
+                notes.attach_file_to_note("Title", str(tmp_path / "missing.png"))
+            with pytest.raises(ValueError, match="regular file"):
+                notes.attach_file_to_note("Title", str(tmp_path))
+        mock_run.assert_not_called()
+
+    def test_attach_fails_if_readback_does_not_confirm_attachment(self, tmp_path) -> None:
+        file_path = tmp_path / "photo.png"
+        file_path.write_bytes(b"test image bytes")
+        with patch.object(notes, "_run_osascript", return_value="INOTES_ERROR_ATTACHMENT_VERIFY_FAILED"):
+            with pytest.raises(notes.NotesError, match="verify"):
+                notes.attach_file_to_note("Title", str(file_path))
+
+    def test_list_attachments_returns_ids_and_names_for_exact_note(self) -> None:
+        raw = "attachment-1" + chr(31) + "photo.png" + chr(30) + "attachment-2" + chr(31) + "clip.wav"
+        with patch.object(notes, "_run_osascript", return_value=raw) as mock_run:
+            result = notes.list_note_attachments("Title", folder="Media")
+        script = mock_run.call_args.args[0]
+        assert result == [
+            {"id": "attachment-1", "name": "photo.png"},
+            {"id": "attachment-2", "name": "clip.wav"},
+        ]
+        assert 'name is "Title"' in script
+        assert 'every folder whose name is "Media"' in script

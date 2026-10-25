@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from html.parser import HTMLParser
+from pathlib import Path
+import re
+from urllib.parse import urlsplit
 import subprocess
 
 
@@ -15,6 +19,38 @@ class NoteNotFoundError(NotesError):
 
 class AmbiguousNoteTitleError(NotesError):
     """More than one note matched the exact title and optional folder."""
+
+
+_PLAIN_URL = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
+_TRAILING_URL_PUNCTUATION = ".,;:!?)]}"
+_LINK_SCHEMES = {"http", "https", "mailto", "tel"}
+
+
+class _NoteLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[tuple[str, str]] = []
+        self._anchor: tuple[str, list[str]] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "a" and self._anchor is None:
+            href = dict(attrs).get("href") or ""
+            self._anchor = (href, [])
+
+    def handle_data(self, data: str) -> None:
+        if self._anchor is not None:
+            self._anchor[1].append(data)
+        else:
+            for match in _PLAIN_URL.finditer(data):
+                url = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
+                self.links.append((url, url))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a" and self._anchor is not None:
+            href, label_parts = self._anchor
+            label = " ".join("".join(label_parts).split()) or href
+            self.links.append((href, label))
+            self._anchor = None
 
 
 def _as_escape(value: str) -> str:
@@ -151,6 +187,130 @@ def show_note(title: str, folder: str | None = None) -> str:
     raw = _run_osascript(script)
     _raise_resolution_error(raw, title)
     return raw
+
+
+def extract_links_from_html(body_html: str, note_title: str) -> list[dict[str, str]]:
+    """Extract external links from one note body without returning its text."""
+    parser = _NoteLinkParser()
+    parser.feed(body_html)
+    parser.close()
+
+    rows: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    def add(url: str, label: str) -> None:
+        cleaned_url = url.strip()
+        parsed = urlsplit(cleaned_url)
+        if parsed.scheme.lower() not in _LINK_SCHEMES:
+            return
+        if parsed.scheme.lower() in {"http", "https"} and not parsed.netloc:
+            return
+        if cleaned_url in seen_urls:
+            return
+        seen_urls.add(cleaned_url)
+        rows.append({"note_title": note_title, "label": label.strip() or cleaned_url, "url": cleaned_url})
+
+    for href, label in parser.links:
+        add(href, label)
+    return rows
+
+
+def list_note_links() -> list[dict[str, str]]:
+    """Scan all Notes HTML bodies once and return only external link records."""
+    script = '''\
+tell application "Notes"
+  set recordSeparator to ASCII character 30
+  set fieldSeparator to ASCII character 31
+  set outputText to ""
+  repeat with noteRef in every note
+    set noteTitle to name of noteRef as text
+    set noteID to id of noteRef as text
+    set noteBody to body of noteRef as text
+    if outputText is not "" then set outputText to outputText & recordSeparator
+    set outputText to outputText & noteTitle & fieldSeparator & noteID & fieldSeparator & noteBody
+  end repeat
+  return outputText
+end tell
+'''
+    raw = _run_osascript(script)
+    links: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for record in raw.split(chr(30)):
+        if not record:
+            continue
+        fields = record.split(chr(31), 2)
+        if len(fields) != 3:
+            raise NotesError("Notes returned malformed data while scanning links.")
+        note_title, note_id, body_html = fields
+        for link in extract_links_from_html(body_html, note_title):
+            key = (note_id, link["url"])
+            if key not in seen:
+                seen.add(key)
+                links.append(link)
+    return links
+
+
+def attach_file_to_note(
+    title: str,
+    file_path: str | Path,
+    folder: str | None = None,
+) -> dict[str, str]:
+    """Attach one local file to a uniquely matched note and verify it."""
+    path = Path(file_path).expanduser()
+    if not path.is_file():
+        raise ValueError(f"Attachment path must be an existing regular file: {path}")
+    resolved_path = str(path.resolve())
+    script = f'''on run argv
+tell application "Notes"
+  {_note_matches(title, folder)}  set fileAlias to POSIX file (item 1 of argv) as alias
+  set newAttachment to make new attachment at end of attachments of targetNote with data fileAlias
+  set attachmentID to id of newAttachment as text
+  set attachmentName to name of newAttachment as text
+  set verified to false
+  repeat with attachmentRef in attachments of targetNote
+    if (id of attachmentRef as text) is attachmentID then set verified to true
+  end repeat
+  if not verified then return "INOTES_ERROR_ATTACHMENT_VERIFY_FAILED"
+  return "OK_ATTACHMENT" & (ASCII character 31) & attachmentID & (ASCII character 31) & attachmentName & (ASCII character 31) & (name of targetNote as text)
+end tell
+end run
+'''
+    raw = _run_osascript(script, resolved_path)
+    _raise_resolution_error(raw, title)
+    if raw == "INOTES_ERROR_ATTACHMENT_VERIFY_FAILED":
+        raise NotesError(f"Could not verify attachment on note {title!r}.")
+    fields = raw.split(chr(31), 3)
+    if len(fields) != 4 or fields[0] != "OK_ATTACHMENT":
+        raise NotesError(f"Unexpected Notes attachment result for {title!r}.")
+    return {"id": fields[1], "name": fields[2], "title": fields[3]}
+
+
+def list_note_attachments(title: str, folder: str | None = None) -> list[dict[str, str]]:
+    """List attachment IDs and names on one uniquely matched note."""
+    script = (
+        'tell application "Notes"\n'
+        f'  {_note_matches(title, folder)}'
+        '  set recordSeparator to ASCII character 30\n'
+        '  set fieldSeparator to ASCII character 31\n'
+        '  set outputText to ""\n'
+        '  repeat with attachmentRef in attachments of targetNote\n'
+        '    if outputText is not "" then set outputText to outputText & recordSeparator\n'
+        '    set outputText to outputText & (id of attachmentRef as text) & fieldSeparator & (name of attachmentRef as text)\n'
+        '  end repeat\n'
+        '  return outputText\n'
+        'end tell\n'
+    )
+    raw = _run_osascript(script)
+    _raise_resolution_error(raw, title)
+    rows: list[dict[str, str]] = []
+    for record in raw.split(chr(30)):
+        if not record:
+            continue
+        fields = record.split(chr(31), 1)
+        if len(fields) != 2:
+            raise NotesError(f"Notes returned malformed attachment data for {title!r}.")
+        rows.append({"id": fields[0], "name": fields[1]})
+    return rows
 
 
 def update_note(

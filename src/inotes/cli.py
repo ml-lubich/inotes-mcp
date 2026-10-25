@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -12,12 +14,18 @@ import typer
 from inotes import __version__, notes
 
 EPILOG = """\
+   _     _   _   _ _____ _____ ____
+  i n o t e s
+
 Examples:
 
   inotes doctor
   inotes list --limit 20
   inotes search "standup" --json
   inotes show "My Note"
+  inotes attach "Voice memo" --file ./memo.wav
+  inotes attachments "Voice memo" --json
+  inotes links --output ~/Documents/note-links.md
   inotes pin "Important note"
   inotes unpin "Old project note"
   inotes create --title "Idea" --body "…"
@@ -29,7 +37,7 @@ Agents: run `inotes agent guide` for a playbook, `inotes agent schema` for JSON.
 
 app = typer.Typer(
     name="inotes",
-    help="Apple Notes CLI — list, search, show, create, edit, delete, and self-update.",
+    help="Apple Notes CLI — list, search, show, attach, edit, pin, unpin, delete, links, and self-update.",
     epilog=EPILOG,
     no_args_is_help=True,
     invoke_without_command=True,
@@ -59,6 +67,10 @@ def _emit_notes(items: list[str], *, as_json: bool) -> None:
         return
     for item in items:
         typer.echo(item)
+
+
+def _markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
 
 
 @app.callback()
@@ -127,6 +139,87 @@ def show_cmd(
     except notes.NotesError as exc:
         _die(str(exc))
     typer.echo(text)
+
+
+@app.command("attach")
+def attach_cmd(
+    title: Annotated[str, typer.Argument(help="Exact title of the destination note.")],
+    file_path: Annotated[Path, typer.Option("--file", "-f", help="Local media/file path to attach.")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder to disambiguate duplicate titles.")] = None,
+) -> None:
+    """Attach one local file to an exact-title note."""
+    try:
+        attachment = notes.attach_file_to_note(title, str(file_path), folder=folder)
+    except (notes.NotesError, ValueError) as exc:
+        _die(str(exc))
+    typer.echo(f"Attached {attachment['name']} to {attachment['title']} (attachment {attachment['id']}).")
+
+
+@app.command("attachments")
+def attachments_cmd(
+    title: Annotated[str, typer.Argument(help="Exact note title.")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder to disambiguate duplicate titles.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", "-j", help="Emit JSON.")] = False,
+) -> None:
+    """List attachment IDs and names on one note."""
+    try:
+        rows = notes.list_note_attachments(title, folder=folder)
+    except notes.NotesError as exc:
+        _die(str(exc))
+    if as_json:
+        typer.echo(json.dumps({"attachments": rows}, ensure_ascii=False))
+        return
+    if not rows:
+        typer.echo("No attachments.")
+        return
+    for row in rows:
+        typer.echo(f"{row['name']}\t{row['id']}")
+
+
+@app.command("links")
+def links_cmd(
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Write the link inventory to a private local file.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", "-j", help="Emit JSON rather than a human list.")] = False,
+) -> None:
+    """Extract external links from all notes, with source titles."""
+    try:
+        rows = notes.list_note_links()
+    except notes.NotesError as exc:
+        _die(str(exc))
+
+    if as_json:
+        rendered = json.dumps({"links": rows}, ensure_ascii=False, indent=2) + "\n"
+    elif output is not None and output.suffix.lower() == ".md":
+        rendered = "# Apple Notes link inventory\n\n"
+        rendered += "| Note | Link text | URL |\n| --- | --- | --- |\n"
+        rendered += "".join(
+            f"| {_markdown_cell(row['note_title'])} | {_markdown_cell(row['label'])} | {_markdown_cell(row['url'])} |\n"
+            for row in rows
+        )
+    else:
+        rendered = "\n".join(
+            f"{row['note_title']}\t{row['label']}\t{row['url']}" for row in rows
+        )
+        if rendered:
+            rendered += "\n"
+
+    if output is None:
+        typer.echo(rendered, nl=False)
+        return
+    destination = output.expanduser()
+    descriptor = None
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(destination, flags, 0o600)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+            descriptor = None
+            output_file.write(rendered)
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        _die(f"Could not write link inventory: {exc}")
+    typer.echo(f"Exported {len(rows)} links to {destination}")
 
 
 @app.command("pin")

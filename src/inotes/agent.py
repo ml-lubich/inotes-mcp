@@ -22,8 +22,14 @@ inotes edit --title "Current Title" [--new-title "New Title"] [--body "Replaceme
 inotes delete --title "Note Title" [--folder "Folder"] --yes
 inotes pin "Note Title" [--folder "Folder"]
 inotes unpin "Note Title" [--folder "Folder"]
+inotes attach "Note Title" --file "/path/to/audio.wav" [--folder "Folder"]
+inotes attachments "Note Title" [--folder "Folder"] [--json]
+inotes links [--output PATH] [--json]
 inotes update
 ```
+
+`inotes -h` is the Typer root help and includes the ASCII wordmark. `-h` and
+`--help` work on every command.
 
 `--json` on `list` and `search` emits `{"notes": ["title", …]}`.
 `edit` needs at least one of `--new-title` or `--body`. It
@@ -40,6 +46,13 @@ UI scripting access in Automation and Accessibility settings. Pinning is
 available for upgraded iCloud notes and notes stored on the Mac; Recently
 Deleted notes cannot be pinned. Missing permission or an unavailable menu
 action is an error, not success.
+`attach` adds one local file at a time and verifies the created attachment;
+`attachments` lists attachment names and IDs on one exact-title note. Supported
+file types depend on the Notes account; Exchange notes do not support file
+attachments. `links` is the only command that scans all note bodies. It returns
+external link URLs with the source note title and link text, without including
+note bodies or following the URLs. Link reports may contain private URLs; only
+write a report with `--output` when needed, and the output file is owner-only.
 
 ## Discovery
 
@@ -61,11 +74,19 @@ inotes <command> -h    # per-command help
 - `update` only upgrades the installed CLI; it does not change notes.
 - `pin` and `unpin` are idempotent, exact-title operations. Use `--folder` to
   disambiguate; never guess.
+- `attach` and `attachments` require one exact-title match; pass `--folder` to
+  disambiguate. Validate local files before attaching; unsupported account/file
+  combinations are reported as errors.
+- `links` intentionally reads every note body only when explicitly invoked.
+  It returns link data, not note bodies, and never opens/follows URLs. Treat
+  output files as private.
 - Pinning uses Notes UI scripting through System Events and needs Automation
   and Accessibility access. It may fail for unsupported accounts or folders.
 - `create --folder` targets a named folder; omit for the default account.
 - MCP offers matching `show_note`, `create_note`, `edit_note`, `delete_note`,
-  `pin_note`, and `unpin_note` tools.
+  `pin_note`, `unpin_note`, `attach_file_to_note`, and
+  `list_note_attachments`, and `list_note_links` tools. `list_note_links`
+  scans all note bodies only when explicitly called.
 """
 
 
@@ -150,6 +171,34 @@ def build_schema() -> dict[str, object]:
                 "supported_notes": "Upgraded iCloud notes and notes stored on this Mac",
                 "match_policy": "Unique exact title only; missing or ambiguous matches fail without UI action",
             },
+            "attach": {
+                "description": "Attach one local file to a uniquely matched note and verify it was added",
+                "params": [
+                    {"name": "title", "type": "str", "positional": True, "required": True},
+                    {"name": "file", "flag": "--file", "type": "path", "required": True},
+                    {"name": "folder", "flag": "--folder", "type": "str", "required": False},
+                ],
+                "match_policy": "Unique exact title only; missing or ambiguous matches fail before attachment",
+                "account_limit": "Exchange notes do not support file attachments; Notes.app errors surface to the caller",
+            },
+            "attachments": {
+                "description": "List attachment names and IDs on one uniquely matched note",
+                "params": [
+                    {"name": "title", "type": "str", "positional": True, "required": True},
+                    {"name": "folder", "flag": "--folder", "type": "str", "required": False},
+                    {"name": "json", "flag": "--json", "type": "bool", "default": False},
+                ],
+                "match_policy": "Unique exact title only",
+            },
+            "links": {
+                "description": "Scan all Notes bodies for external hyperlinks and plain HTTP(S) URLs",
+                "params": [
+                    {"name": "output", "flag": "--output", "type": "path", "required": False, "description": "Write a private link report; no file is created when omitted"},
+                    {"name": "json", "flag": "--json", "type": "bool", "default": False},
+                ],
+                "fields": ["note_title", "link_text", "url"],
+                "privacy": "Only this explicit command reads all note bodies; output excludes bodies and does not follow URLs",
+            },
             "update": {
                 "description": "Upgrade the installed inotes CLI using uv",
                 "params": [],
@@ -171,6 +220,14 @@ def build_schema() -> dict[str, object]:
             "delete_note": {"description": "Delete one uniquely matched note by exact title", "args": ["title", "folder"]},
             "pin_note": {"description": "Pin one uniquely matched note via Notes UI scripting; idempotent", "args": ["title", "folder"]},
             "unpin_note": {"description": "Unpin one uniquely matched note via Notes UI scripting; idempotent", "args": ["title", "folder"]},
+            "attach_file_to_note": {"description": "Attach one local file to a uniquely matched note", "args": ["title", "file_path", "folder"]},
+            "list_note_attachments": {"description": "List names and IDs of a note's attachments", "args": ["title", "folder"]},
+            "list_note_links": {
+                "description": "Scan all Notes bodies for external hyperlinks and plain HTTP(S) URLs",
+                "args": [],
+                "fields": ["note_title", "link_text", "url"],
+                "privacy": "Returns links, not note bodies, and never follows URLs",
+            },
         },
     }
 

@@ -1,9 +1,8 @@
 # inotes — Apple Notes CLI
 
-`inotes` is a fast, scriptable command line for **Apple Notes** — list, search,
-read, create, edit, and delete notes from your terminal, with `-j`/`--json` flags
-where supported. Part of the `imsg` / `imail` / `inotes` / `wa` local-first
-tool family.
+`inotes` is a Typer command line for **Apple Notes** — list, search, read,
+create, edit, delete, pin, unpin, attach local files, and inventory note links.
+Part of the `imsg` / `imail` / `inotes` / `wa` local-first tool family.
 
 ```bash
 inotes list --limit 20
@@ -13,6 +12,9 @@ inotes create --title "Idea" --body "…"
 inotes edit --title "Idea" --body "Revised text"
 inotes pin "Project Plan"
 inotes unpin "Project Plan"
+inotes attach "Project Plan" --file ./demo.wav
+inotes attachments "Project Plan" --json
+inotes links --output ./inotes-links.md
 inotes update
 ```
 
@@ -73,6 +75,9 @@ inotes edit --title "Shared" --body "Revised" --folder "Work" # disambiguate dup
 inotes delete --title "Old Note" --yes                # permanent; explicit confirmation required
 inotes pin "Important Note" --folder "Work"         # pin exact title in folder
 inotes unpin "Important Note"                       # unpin; safe to repeat
+inotes attach "Project Plan" --file ./demo.wav      # attach a local media file
+inotes attachments "Project Plan" --json             # inspect file attachments
+inotes links --output ./inotes-links.md              # inventory links across notes
 inotes update                                           # upgrade the installed CLI
 inotes version
 inotes -h                                             # help at every level
@@ -101,6 +106,18 @@ for upgraded iCloud notes and notes stored on the Mac; Recently Deleted notes
 cannot be pinned. A missing permission or unavailable menu action is an error,
 not a success. See [Apple's pinning guide](https://support.apple.com/en-euro/guide/notes/apdb54e469b6/mac).
 
+`attach` takes one local file per invocation and verifies it appears on the
+uniquely matched note. Notes accepts common files and media; support depends on
+the account type. Apple documents that Exchange notes cannot attach files. See
+[Apple's attachment guide](https://support.apple.com/guide/notes/add-photos-pdfs-and-more-not95edd2813/mac).
+Use `attachments` to list attachment names and IDs for one note.
+
+`links` is the only command that scans every note body. It extracts external
+hyperlinks and plain HTTP(S) URLs, returning the source note title, link label,
+and URL without including note bodies or following links. A report can contain
+private URLs; `--output` writes it to a file with owner-only permissions. No
+report is created unless that option is supplied.
+
 ---
 
 ## Commands
@@ -116,6 +133,9 @@ not a success. See [Apple's pinning guide](https://support.apple.com/en-euro/gui
 | `delete` | Permanently delete a uniquely matched note (`--yes` required) |
 | `pin` | Pin one uniquely matched note (`--folder` scopes duplicate titles) |
 | `unpin` | Unpin one uniquely matched note (`--folder` scopes duplicate titles) |
+| `attach` | Attach a local file to one uniquely matched note (`--file`, optional `--folder`) |
+| `attachments` | List file attachments on one note (`--json`, optional `--folder`) |
+| `links` | Inventory note hyperlinks and plain URLs; optionally write a private report (`--output`) |
 | `update` | Upgrade the installed CLI with uv |
 | `version` | Print the installed version |
 | `mcp` | Run the built-in MCP server over stdio |
@@ -130,7 +150,7 @@ Help is available at every level: `inotes -h`, `inotes <command> -h`,
 ## Using inotes from an agent
 
 `inotes` is CLI-first by design — cheaper on tokens than a full MCP round
-trip for the common case of list/search/show/create/edit/delete/pin/unpin. `inotes agent schema`
+trip for the common case of list/search/show/create/edit/delete/pin/unpin/attach/attachments. `inotes agent schema`
 gives an agent a machine-readable contract of every command and its
 parameters; `inotes agent guide` gives it a short playbook (the same rules
 documented above: run `doctor` first, `--json` on `list`/`search`, exit code
@@ -141,7 +161,8 @@ contact Notes.app. Notes automation runs only when a Notes command is invoked.
 
 `inotes mcp` runs a stdio MCP server exposing the same operations
 (`doctor`, `list_notes`, `search_notes`, `show_note`, `create_note`,
-`edit_note`, `delete_note`, `pin_note`, `unpin_note`) as MCP
+`edit_note`, `delete_note`, `pin_note`, `unpin_note`, `attach_file_to_note`,
+`list_note_attachments`, `list_note_links`) as MCP
 tools — no separate package needed. Point any MCP client at the installed
 `inotes` command:
 

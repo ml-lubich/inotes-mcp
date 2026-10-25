@@ -14,6 +14,9 @@ def test_mcp_tools():
     assert callable(mcp.delete_note)
     assert callable(mcp.pin_note)
     assert callable(mcp.unpin_note)
+    assert callable(mcp.attach_file_to_note)
+    assert callable(mcp.list_note_attachments)
+    assert callable(mcp.list_note_links)
 
 def test_mcp_run_server(monkeypatch):
     called = False
@@ -103,6 +106,25 @@ class TestMcpToolsDelegateToNotes:
         with patch(f"inotes.mcp.notes.{tool}", side_effect=notes.NotesError("UI scripting permission required")):
             with pytest.raises(notes.NotesError, match="permission"):
                 getattr(mcp, tool)("Title")
+
+    def test_attach_file_to_note_delegates_path_and_folder(self) -> None:
+        expected = {"id": "att-1", "name": "audio.wav", "title": "Voice note"}
+        with patch("inotes.mcp.notes.attach_file_to_note", return_value=expected) as mock_attach:
+            result = mcp.attach_file_to_note("Voice note", "/tmp/audio.wav", folder="Audio")
+        assert result == expected
+        mock_attach.assert_called_once_with("Voice note", "/tmp/audio.wav", folder="Audio")
+
+    def test_list_note_attachments_delegates_scope(self) -> None:
+        expected = [{"id": "att-1", "name": "photo.png"}]
+        with patch("inotes.mcp.notes.list_note_attachments", return_value=expected) as mock_list:
+            assert mcp.list_note_attachments("Idea", folder="Media") == expected
+        mock_list.assert_called_once_with("Idea", folder="Media")
+
+    def test_list_note_links_delegates(self) -> None:
+        expected = [{"note_title": "Reference", "label": "Example", "url": "https://example.test"}]
+        with patch("inotes.mcp.notes.list_note_links", return_value=expected) as mock_list:
+            assert mcp.list_note_links() == expected
+        mock_list.assert_called_once_with()
 
     def test_notes_error_propagates_uncaught(self) -> None:
         # The MCP layer does no error translation of its own — a NotesError

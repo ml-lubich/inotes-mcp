@@ -270,6 +270,64 @@ class TestPinUnpinCmd:
             assert "--folder" in result.output
 
 
+class TestAttachmentsCmd:
+    def test_attach_forwards_exact_title_file_and_folder(self, tmp_path) -> None:
+        file_path = tmp_path / "sample.wav"
+        file_path.write_bytes(b"fake audio")
+        with patch(
+            "inotes.cli.notes.attach_file_to_note",
+            return_value={"id": "attachment-1", "name": "sample.wav", "title": "Voice note"},
+        ) as mock_attach:
+            result = runner.invoke(app, ["attach", "Voice note", "--file", str(file_path), "--folder", "Audio"])
+        assert result.exit_code == 0, result.output
+        assert "sample.wav" in result.output
+        mock_attach.assert_called_once_with("Voice note", str(file_path), folder="Audio")
+
+    def test_attachments_json_lists_names_and_ids(self) -> None:
+        rows = [{"id": "att-1", "name": "photo.png"}, {"id": "att-2", "name": "sound.wav"}]
+        with patch("inotes.cli.notes.list_note_attachments", return_value=rows) as mock_list:
+            result = runner.invoke(app, ["attachments", "Idea", "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"attachments": rows}
+        mock_list.assert_called_once_with("Idea", folder=None)
+
+    def test_root_help_contains_ascii_wordmark(self) -> None:
+        result = runner.invoke(app, ["-h"])
+        assert result.exit_code == 0, result.output
+        assert "i n o t e s" in result.output
+        assert "pin" in result.output and "links" in result.output
+
+    def test_links_json_emits_only_link_rows(self) -> None:
+        rows = [{"note_title": "Reference", "label": "Example", "url": "https://example.test"}]
+        with patch("inotes.cli.notes.list_note_links", return_value=rows):
+            result = runner.invoke(app, ["links", "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"links": rows}
+
+    def test_links_output_file_is_private_and_reports_count(self, tmp_path) -> None:
+        import stat
+
+        rows = [{"note_title": "Reference", "label": "Example", "url": "https://example.test"}]
+        output_path = tmp_path / "link-index.json"
+        with patch("inotes.cli.notes.list_note_links", return_value=rows):
+            result = runner.invoke(app, ["links", "--json", "--output", str(output_path)])
+        assert result.exit_code == 0, result.output
+        assert json.loads(output_path.read_text()) == {"links": rows}
+        assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+        assert "1 links" in result.output
+
+    def test_markdown_output_is_a_table_and_escapes_pipes(self, tmp_path) -> None:
+        rows = [{"note_title": "A | B", "label": "Docs", "url": "https://example.test/a|b"}]
+        output_path = tmp_path / "link-index.md"
+        with patch("inotes.cli.notes.list_note_links", return_value=rows):
+            result = runner.invoke(app, ["links", "--output", str(output_path)])
+        assert result.exit_code == 0, result.output
+        contents = output_path.read_text()
+        assert "| Note | Link text | URL |" in contents
+        assert r"A \| B" in contents
+        assert r"https://example.test/a\|b" in contents
+
+
 class TestVersionCmd:
     def test_version_command(self) -> None:
         result = runner.invoke(app, ["version"])

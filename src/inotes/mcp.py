@@ -40,6 +40,24 @@ def unpin_note(title: str, folder: str | None = None) -> str:
     """Unpin one uniquely matched note via Notes UI scripting; safe to repeat."""
     return notes.unpin_note(title, folder=folder)
 
+
+@mcp.tool()
+def list_note_links() -> list[dict[str, str]]:
+    """Extract external links from all note bodies without returning body text."""
+    return notes.list_note_links()
+
+
+@mcp.tool()
+def attach_file_to_note(title: str, file_path: str, folder: str | None = None) -> dict[str, str]:
+    """Attach one local file to a uniquely matched note and verify it."""
+    return notes.attach_file_to_note(title, file_path, folder=folder)
+
+
+@mcp.tool()
+def list_note_attachments(title: str, folder: str | None = None) -> list[dict[str, str]]:
+    """List attachment IDs and names on one note."""
+    return notes.list_note_attachments(title, folder=folder)
+
 @mcp.tool()
 def create_note(title: str, body: str = "", folder: str = "") -> str:
     """Create a new note in Apple Notes."""
