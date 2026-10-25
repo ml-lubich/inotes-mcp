@@ -141,6 +141,12 @@ class TestShowCmd:
             result = runner.invoke(app, ["show", "Missing"])
         assert result.exit_code == 1
 
+    def test_show_can_disambiguate_exact_title_by_folder(self) -> None:
+        with patch("inotes.cli.notes.show_note", return_value="Title\n\nBody") as mock_show:
+            result = runner.invoke(app, ["show", "Title", "--folder", "Work"])
+        assert result.exit_code == 0, result.output
+        mock_show.assert_called_once_with("Title", folder="Work")
+
 
 class TestCreateCmd:
     def test_create_success(self) -> None:
@@ -159,6 +165,44 @@ class TestCreateCmd:
         ):
             result = runner.invoke(app, ["create", "--title", "Idea"])
         assert result.exit_code == 1
+
+
+class TestUpdateCmd:
+    def test_update_success_for_body_and_title(self) -> None:
+        with patch("inotes.cli.notes.update_note", return_value="OK updated: New title") as mock_update:
+            result = runner.invoke(app, [
+                "update", "--title", "Old title", "--new-title", "New title",
+                "--body", "Revised body", "--folder", "Work",
+            ])
+        assert result.exit_code == 0, result.output
+        assert "OK updated" in result.output
+        mock_update.assert_called_once_with(
+            "Old title", new_title="New title", body="Revised body", folder="Work",
+        )
+
+    def test_update_requires_at_least_one_field(self) -> None:
+        with patch("inotes.cli.notes.update_note") as mock_update:
+            result = runner.invoke(app, ["update", "--title", "Old title", "--folder", "Work"])
+        assert result.exit_code != 0
+        assert "at least one" in result.output.lower()
+        mock_update.assert_not_called()
+
+    @pytest.mark.parametrize("message", ["Note not found: Missing", "Ambiguous note title: Shared"])
+    def test_update_reports_missing_or_ambiguous_title(self, message: str) -> None:
+        with patch("inotes.cli.notes.update_note", side_effect=notes.NotesError(message)):
+            result = runner.invoke(app, ["update", "--title", "Missing", "--body", "Changed"])
+        assert result.exit_code == 1
+        assert message.split(":", 1)[0] in result.output
+
+    def test_update_help_documents_partial_edits(self) -> None:
+        for flag in ("-h", "--help"):
+            result = runner.invoke(app, ["update", flag])
+            assert result.exit_code == 0, result.output
+            assert "--title" in result.output
+            assert "--new-title" in result.output
+            assert "--body" in result.output
+            assert "--folder" in result.output
+            assert "omitted" in result.output.lower() or "preserved" in result.output.lower()
 
 
 class TestVersionCmd:

@@ -18,13 +18,14 @@ Examples:
   inotes search "standup" --json
   inotes show "My Note"
   inotes create --title "Idea" --body "…"
+  inotes update --title "Old title" --new-title "New title" --body "Updated text"
 
 Agents: run `inotes agent guide` for a playbook, `inotes agent schema` for JSON.
 """
 
 app = typer.Typer(
     name="inotes",
-    help="Apple Notes CLI — list, search, show, create. Built for humans and agents.",
+    help="Apple Notes CLI — list, search, show, create, update. Built for humans and agents.",
     epilog=EPILOG,
     no_args_is_help=True,
     invoke_without_command=True,
@@ -114,10 +115,11 @@ def search_cmd(
 @app.command("show")
 def show_cmd(
     title: Annotated[str, typer.Argument(help="Exact note title.")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder to disambiguate duplicate titles.")] = None,
 ) -> None:
-    """Show a note by exact title."""
+    """Show a note by unique exact title, optionally scoped to a folder."""
     try:
-        text = notes.show_note(title)
+        text = notes.show_note(title) if folder is None else notes.show_note(title, folder=folder)
     except notes.NotesError as exc:
         _die(str(exc))
     typer.echo(text)
@@ -133,6 +135,23 @@ def create_cmd(
     try:
         message = notes.create_note(title, body=body, folder=folder)
     except notes.NotesError as exc:
+        _die(str(exc))
+    typer.echo(message)
+
+
+@app.command("update")
+def update_cmd(
+    title: Annotated[str, typer.Option("--title", help="Current exact note title.")],
+    new_title: Annotated[str | None, typer.Option("--new-title", help="Set a new title.")] = None,
+    body: Annotated[str | None, typer.Option("--body", help="Replace the full body; an empty value clears it.")] = None,
+    folder: Annotated[str | None, typer.Option("--folder", help="Source folder to disambiguate duplicate titles.")] = None,
+) -> None:
+    """Update only supplied fields; omitted fields are preserved."""
+    if new_title is None and body is None:
+        _die("Provide at least one update field: --new-title or --body.", code=2)
+    try:
+        message = notes.update_note(title, new_title=new_title, body=body, folder=folder)
+    except (notes.NotesError, ValueError) as exc:
         _die(str(exc))
     typer.echo(message)
 

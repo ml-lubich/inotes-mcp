@@ -194,6 +194,86 @@ class TestShowNote:
             text = notes.show_note("Title")
         assert text == body_with_html
 
+    def test_can_scope_exact_title_lookup_to_folder(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="Title\n\nBody") as mock_run:
+            notes.show_note("Title", folder="Work")
+        script = mock_run.call_args.args[0]
+        assert 'name is "Title"' in script
+        assert 'every folder whose name is "Work"' in script
+
+    def test_show_resolves_exact_title_and_rejects_duplicate_titles(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="Title\n\nBody") as mock_run:
+            notes.show_note("Title")
+        script = mock_run.call_args_list[0].args[0]
+        assert "name is" in script
+        assert "count of matchingNotes" in script
+        assert "ambiguous" in script.lower()
+        assert "container of" in script
+
+    @pytest.mark.parametrize("message", ["Note not found: Missing", "Ambiguous note title: Shared"])
+    def test_show_reports_missing_and_ambiguous_titles(self, message: str) -> None:
+        with patch.object(notes, "_run_osascript", side_effect=notes.NotesError(message)):
+            with pytest.raises(notes.NotesError, match=message.split(":", 1)[0]):
+                notes.show_note("Missing" if "Missing" in message else "Shared")
+
+
+class TestUpdateNote:
+    def test_requires_at_least_one_update_field_without_running_osascript(self) -> None:
+        with patch.object(notes, "_run_osascript") as mock_run:
+            with pytest.raises(ValueError, match="at least one"):
+                notes.update_note("Title")
+        mock_run.assert_not_called()
+
+    def test_updates_only_supplied_body_and_verifies_readback(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK updated: Title") as mock_run:
+            result = notes.update_note("Title", body="Revised body")
+        assert "updated" in result.lower()
+        script = mock_run.call_args_list[0].args[0]
+        assert "count of matchingNotes" in script
+        assert "set body of targetNote" in script
+        assert "plaintext of targetNote" in script
+        assert "set name of targetNote" not in script
+
+    def test_explicit_empty_body_clears_note_body(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK updated: Title") as mock_run:
+            notes.update_note("Title", body="")
+        script = mock_run.call_args_list[0].args[0]
+        assert "body of targetNote" in script
+        assert 'set body of targetNote to ""' in script
+
+    def test_updates_only_supplied_title_and_can_scope_to_folder(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK updated: New title") as mock_run:
+            notes.update_note("Old title", new_title="New title", folder="Work")
+        script = mock_run.call_args_list[0].args[0]
+        assert 'name is "Old title"' in script
+        assert 'every folder whose name is "Work"' in script
+        assert 'set name of targetNote to "New title"' in script
+        assert "set body of targetNote" not in script
+
+    @pytest.mark.parametrize("message", ["Note not found: Missing", "Ambiguous note title: Shared"])
+    def test_update_does_not_write_when_title_is_missing_or_ambiguous(self, message: str) -> None:
+        with patch.object(notes, "_run_osascript", side_effect=notes.NotesError(message)) as mock_run:
+            with pytest.raises(notes.NotesError, match=message.split(":", 1)[0]):
+                notes.update_note("Missing" if "Missing" in message else "Shared", body="Changed")
+        assert mock_run.call_count == 1
+        script = mock_run.call_args_list[0].args[0]
+        assert script.index("count of matchingNotes") < script.index("set body of targetNote")
+
+    def test_update_passes_escaped_user_values(self) -> None:
+        title = 'Say "hi"\\bye'
+        body = 'New "quoted" body'
+        with patch.object(notes, "_run_osascript", return_value="OK updated") as mock_run:
+            notes.update_note(title, new_title=title, body=body)
+        script = mock_run.call_args_list[0].args[0]
+        assert notes._as_escape(title) in script
+        assert notes._as_escape(body) in script
+        assert f'name is "{title}"' not in script
+
+    def test_update_verification_failure_is_reported(self) -> None:
+        with patch.object(notes, "_run_osascript", side_effect=["WRITE_OK", notes.NotesError("readback mismatch")]):
+            with pytest.raises(notes.NotesError, match="readback"):
+                notes.update_note("Title", body="New body")
+
 
 class TestCreateNote:
     def test_creates_in_default_account(self) -> None:

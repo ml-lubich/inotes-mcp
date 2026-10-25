@@ -10,6 +10,7 @@ def test_mcp_tools():
     assert callable(mcp.search_notes)
     assert callable(mcp.show_note)
     assert callable(mcp.create_note)
+    assert callable(mcp.update_note)
 
 def test_mcp_run_server(monkeypatch):
     called = False
@@ -51,6 +52,11 @@ class TestMcpToolsDelegateToNotes:
             assert mcp.show_note("Title") == "body"
         m.assert_called_once_with("Title")
 
+    def test_show_note_can_scope_to_folder(self) -> None:
+        with patch("inotes.mcp.notes.show_note", return_value="body") as m:
+            assert mcp.show_note("Title", folder="Work") == "body"
+        m.assert_called_once_with("Title", folder="Work")
+
     def test_create_note_delegates_with_defaults(self) -> None:
         with patch("inotes.mcp.notes.create_note", return_value="OK created: T") as m:
             mcp.create_note("T")
@@ -60,6 +66,20 @@ class TestMcpToolsDelegateToNotes:
         with patch("inotes.mcp.notes.create_note", return_value="OK created: T") as m:
             mcp.create_note("T", body="B", folder="F")
         m.assert_called_once_with("T", body="B", folder="F")
+
+    def test_update_note_delegates_partial_fields_and_scope(self) -> None:
+        with patch("inotes.mcp.notes.update_note", return_value="OK updated: New title") as m:
+            result = mcp.update_note("Old title", new_title="New title", body="New body", folder="Work")
+        assert result == "OK updated: New title"
+        m.assert_called_once_with(
+            "Old title", new_title="New title", body="New body", folder="Work",
+        )
+
+    def test_update_note_preserves_omitted_fields_by_default(self) -> None:
+        with patch("inotes.mcp.notes.update_note", side_effect=ValueError("at least one update field is required")) as m:
+            with pytest.raises(ValueError, match="at least one"):
+                mcp.update_note("Title")
+        m.assert_called_once_with("Title", new_title=None, body=None, folder=None)
 
     def test_notes_error_propagates_uncaught(self) -> None:
         # The MCP layer does no error translation of its own — a NotesError
@@ -90,6 +110,10 @@ class TestMcpToolsInvalidInput:
     def test_create_note_missing_title_raises_type_error(self) -> None:
         with pytest.raises(TypeError):
             mcp.create_note()  # type: ignore[call-arg]
+
+    def test_update_note_missing_title_raises_type_error(self) -> None:
+        with pytest.raises(TypeError):
+            mcp.update_note()  # type: ignore[call-arg]
 
     def test_list_notes_rejects_unexpected_keyword(self) -> None:
         with pytest.raises(TypeError):
