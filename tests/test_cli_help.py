@@ -24,6 +24,12 @@ HELP_TARGETS: list[list[str]] = [
     ["show", "--help"],
     ["create", "-h"],
     ["create", "--help"],
+    ["edit", "-h"],
+    ["edit", "--help"],
+    ["delete", "-h"],
+    ["delete", "--help"],
+    ["update", "-h"],
+    ["update", "--help"],
     ["version", "-h"],
     ["version", "--help"],
     ["agent", "-h"],
@@ -65,7 +71,7 @@ def test_agent_schema_json() -> None:
     assert payload["tool"] == "inotes"
     commands = payload["commands"]
     assert isinstance(commands, dict)
-    for name in ("doctor", "list", "search", "show", "create", "version"):
+    for name in ("doctor", "list", "search", "show", "create", "edit", "delete", "update", "version"):
         assert name in commands
         assert "params" in commands[name]
     assert any(p.get("name") == "limit" for p in commands["list"]["params"])

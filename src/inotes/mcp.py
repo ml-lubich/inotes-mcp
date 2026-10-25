@@ -35,14 +35,20 @@ def create_note(title: str, body: str = "", folder: str = "") -> str:
 
 
 @mcp.tool()
-def update_note(
+def edit_note(
     title: str,
     new_title: str | None = None,
     body: str | None = None,
     folder: str | None = None,
 ) -> str:
-    """Update supplied fields on a uniquely matched note; omitted fields stay unchanged."""
+    """Edit supplied fields on a uniquely matched note; omitted fields stay unchanged."""
     return notes.update_note(title, new_title=new_title, body=body, folder=folder)
+
+
+@mcp.tool()
+def delete_note(title: str, folder: str | None = None) -> str:
+    """Delete one uniquely matched note by exact title."""
+    return notes.delete_note(title, folder=folder)
 
 def run_server():
     mcp.run(transport="stdio")

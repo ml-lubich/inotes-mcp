@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -30,6 +31,7 @@ class TestMainCallback:
         result = runner.invoke(app, [])
         assert result.exit_code in (0, 2)
         assert "Usage:" in result.output or "inotes" in result.output
+        assert "self-update" in result.output
 
     def test_version_flag_real_invocation(self) -> None:
         # Regression: without invoke_without_command=True on the Typer app,
@@ -167,11 +169,11 @@ class TestCreateCmd:
         assert result.exit_code == 1
 
 
-class TestUpdateCmd:
-    def test_update_success_for_body_and_title(self) -> None:
+class TestEditCmd:
+    def test_edit_success_for_body_and_title(self) -> None:
         with patch("inotes.cli.notes.update_note", return_value="OK updated: New title") as mock_update:
             result = runner.invoke(app, [
-                "update", "--title", "Old title", "--new-title", "New title",
+                "edit", "--title", "Old title", "--new-title", "New title",
                 "--body", "Revised body", "--folder", "Work",
             ])
         assert result.exit_code == 0, result.output
@@ -180,29 +182,63 @@ class TestUpdateCmd:
             "Old title", new_title="New title", body="Revised body", folder="Work",
         )
 
-    def test_update_requires_at_least_one_field(self) -> None:
+    def test_edit_requires_at_least_one_field(self) -> None:
         with patch("inotes.cli.notes.update_note") as mock_update:
-            result = runner.invoke(app, ["update", "--title", "Old title", "--folder", "Work"])
+            result = runner.invoke(app, ["edit", "--title", "Old title", "--folder", "Work"])
         assert result.exit_code != 0
         assert "at least one" in result.output.lower()
         mock_update.assert_not_called()
 
     @pytest.mark.parametrize("message", ["Note not found: Missing", "Ambiguous note title: Shared"])
-    def test_update_reports_missing_or_ambiguous_title(self, message: str) -> None:
+    def test_edit_reports_missing_or_ambiguous_title(self, message: str) -> None:
         with patch("inotes.cli.notes.update_note", side_effect=notes.NotesError(message)):
-            result = runner.invoke(app, ["update", "--title", "Missing", "--body", "Changed"])
+            result = runner.invoke(app, ["edit", "--title", "Missing", "--body", "Changed"])
         assert result.exit_code == 1
         assert message.split(":", 1)[0] in result.output
 
-    def test_update_help_documents_partial_edits(self) -> None:
+    def test_edit_help_documents_partial_edits(self) -> None:
         for flag in ("-h", "--help"):
-            result = runner.invoke(app, ["update", flag])
+            result = runner.invoke(app, ["edit", flag])
             assert result.exit_code == 0, result.output
             assert "--title" in result.output
             assert "--new-title" in result.output
             assert "--body" in result.output
             assert "--folder" in result.output
             assert "omitted" in result.output.lower() or "preserved" in result.output.lower()
+
+
+class TestSelfUpdateCmd:
+    def test_update_upgrades_the_installed_tool(self) -> None:
+        with patch("inotes.cli.subprocess.run", return_value=subprocess.CompletedProcess([], 0)) as mock_run:
+            result = runner.invoke(app, ["update"])
+        assert result.exit_code == 0, result.output
+        mock_run.assert_called_once_with(["uv", "tool", "upgrade", "inotes-mcp"], check=False)
+
+    def test_update_reports_package_manager_failure(self) -> None:
+        with patch("inotes.cli.subprocess.run", return_value=subprocess.CompletedProcess([], 1)):
+            result = runner.invoke(app, ["update"])
+        assert result.exit_code == 1
+        assert "upgrade failed" in result.output.lower()
+
+    def test_update_reports_missing_uv(self) -> None:
+        with patch("inotes.cli.subprocess.run", side_effect=FileNotFoundError("uv missing")):
+            result = runner.invoke(app, ["update"])
+        assert result.exit_code == 1
+        assert "uv missing" in result.output
+
+
+class TestDeleteCmd:
+    def test_delete_requires_explicit_confirmation_flag(self) -> None:
+        with patch("inotes.cli.notes.delete_note") as mock_delete:
+            result = runner.invoke(app, ["delete", "--title", "Old title"])
+        assert result.exit_code != 0
+        mock_delete.assert_not_called()
+
+    def test_delete_delegates_after_confirmation(self) -> None:
+        with patch("inotes.cli.notes.delete_note", return_value="OK deleted: Title") as mock_delete:
+            result = runner.invoke(app, ["delete", "--title", "Title", "--folder", "Work", "--yes"])
+        assert result.exit_code == 0, result.output
+        mock_delete.assert_called_once_with("Title", folder="Work")
 
 
 class TestVersionCmd:

@@ -12,9 +12,10 @@ def test_build_schema_structure() -> None:
     assert schema["tool"] == "inotes"
     commands = schema["commands"]
     assert isinstance(commands, dict)
-    for name in ("doctor", "list", "search", "show", "create", "version"):
+    for name in ("doctor", "list", "search", "show", "create", "edit", "delete", "update", "version"):
         assert name in commands
         assert "params" in commands[name]
+    assert commands["update"]["params"] == []
 
 
 def test_build_guide_returns_playbook() -> None:
@@ -22,3 +23,4 @@ def test_build_guide_returns_playbook() -> None:
     assert "inotes — Agent Playbook" in guide
     assert "inotes doctor" in guide
     assert "inotes agent schema" in guide
+    assert "uv tool upgrade inotes-mcp" in guide

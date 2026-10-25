@@ -340,3 +340,21 @@ class TestCreateNote:
         # `name:"..."` literal — only its escaped form should.
         assert f'name:"{payload}"' not in script
         assert notes._as_escape(payload) in script
+
+
+class TestDeleteNote:
+    def test_delete_requires_one_resolved_note_before_mutating(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK deleted: Title") as mock_run:
+            result = notes.delete_note("Title", folder="Work")
+        assert result == "OK deleted: Title"
+        script = mock_run.call_args.args[0]
+        assert "count of matchingNotes" in script
+        assert 'every folder whose name is "Work"' in script
+        assert script.index("count of matchingNotes") < script.index("delete targetNote")
+
+    @pytest.mark.parametrize("message", ["Note not found: Missing", "Ambiguous note title: Shared"])
+    def test_delete_does_not_mutate_missing_or_ambiguous_title(self, message: str) -> None:
+        with patch.object(notes, "_run_osascript", side_effect=notes.NotesError(message)) as mock_run:
+            with pytest.raises(notes.NotesError):
+                notes.delete_note("Shared")
+        assert mock_run.call_count == 1

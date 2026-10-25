@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from typing import Annotated
 
@@ -18,14 +19,15 @@ Examples:
   inotes search "standup" --json
   inotes show "My Note"
   inotes create --title "Idea" --body "…"
-  inotes update --title "Old title" --new-title "New title" --body "Updated text"
+  inotes edit --title "Old title" --new-title "New title" --body "Updated text"
+  inotes update
 
 Agents: run `inotes agent guide` for a playbook, `inotes agent schema` for JSON.
 """
 
 app = typer.Typer(
     name="inotes",
-    help="Apple Notes CLI — list, search, show, create, update. Built for humans and agents.",
+    help="Apple Notes CLI — list, search, show, create, edit, delete, and self-update.",
     epilog=EPILOG,
     no_args_is_help=True,
     invoke_without_command=True,
@@ -139,21 +141,49 @@ def create_cmd(
     typer.echo(message)
 
 
-@app.command("update")
-def update_cmd(
+@app.command("edit")
+def edit_cmd(
     title: Annotated[str, typer.Option("--title", help="Current exact note title.")],
     new_title: Annotated[str | None, typer.Option("--new-title", help="Set a new title.")] = None,
     body: Annotated[str | None, typer.Option("--body", help="Replace the full body; an empty value clears it.")] = None,
     folder: Annotated[str | None, typer.Option("--folder", help="Source folder to disambiguate duplicate titles.")] = None,
 ) -> None:
-    """Update only supplied fields; omitted fields are preserved."""
+    """Edit only supplied fields; omitted fields are preserved."""
     if new_title is None and body is None:
-        _die("Provide at least one update field: --new-title or --body.", code=2)
+        _die("Provide at least one edit field: --new-title or --body.", code=2)
     try:
         message = notes.update_note(title, new_title=new_title, body=body, folder=folder)
     except (notes.NotesError, ValueError) as exc:
         _die(str(exc))
     typer.echo(message)
+
+
+@app.command("delete")
+def delete_cmd(
+    title: Annotated[str, typer.Option("--title", help="Exact note title.")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder to disambiguate duplicate titles.")] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm permanent deletion.")] = False,
+) -> None:
+    """Delete one uniquely matched note; requires --yes."""
+    if not yes:
+        _die("Deletion requires explicit confirmation with --yes.", code=2)
+    try:
+        message = notes.delete_note(title, folder=folder)
+    except notes.NotesError as exc:
+        _die(str(exc))
+    typer.echo(message)
+
+
+@app.command("update")
+def self_update_cmd() -> None:
+    """Upgrade the installed inotes CLI."""
+    try:
+        result = subprocess.run(["uv", "tool", "upgrade", "inotes-mcp"], check=False)
+    except OSError as exc:
+        _die(f"inotes upgrade failed: {exc}")
+    if result.returncode != 0:
+        _die(f"inotes upgrade failed (uv exited {result.returncode}).")
+    typer.echo("inotes upgrade complete.")
 
 
 @app.command("version")

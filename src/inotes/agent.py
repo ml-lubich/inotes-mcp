@@ -18,15 +18,19 @@ inotes list --limit 20 [--json]
 inotes search "QUERY" --limit 20 [--json]
 inotes show "Note Title" [--folder "Folder"]
 inotes create --title "Title" [--body "…"] [--folder "Folder"]
-inotes update --title "Current Title" [--new-title "New Title"] [--body "Replacement body"] [--folder "Folder"]
+inotes edit --title "Current Title" [--new-title "New Title"] [--body "Replacement body"] [--folder "Folder"]
+inotes delete --title "Note Title" [--folder "Folder"] --yes
+inotes update
 ```
 
 `--json` on `list` and `search` emits `{"notes": ["title", …]}`.
-`update` needs at least one of `--new-title` or `--body`. It
+`edit` needs at least one of `--new-title` or `--body`. It
 preserves omitted fields; a supplied `--body` replaces the full body, and
 `--body ""` clears it. `--folder` scopes the source title match when needed;
 it does not move the note.
-Successful updates are read back to verify the requested changes.
+Successful edits are read back to verify the requested changes. `delete`
+requires `--yes` and removes only one uniquely matched title. `update` upgrades
+the installed CLI with `uv tool upgrade inotes-mcp`; it never edits notes.
 
 ## Discovery
 
@@ -41,12 +45,13 @@ inotes <command> -h    # per-command help
 
 - Run `inotes doctor` first if Automation permissions may be missing.
 - Exit code 0 on success; non-zero on failure with message on stderr.
-- `show` and `update` require one exact note-title match. Missing or duplicate
+- `show`, `edit`, and `delete` require one exact note-title match. Missing or duplicate
   titles return an error; use `--folder` to disambiguate; never guess.
-- `list`, `search`, and `show` are read-only. `create` and `update` write only
+- `list`, `search`, and `show` are read-only. `create`, `edit`, and `delete` write only
   when explicitly invoked.
+- `update` only upgrades the installed CLI; it does not change notes.
 - `create --folder` targets a named folder; omit for the default account.
-- MCP offers matching `show_note`, `create_note`, and `update_note` tools.
+- MCP offers matching `show_note`, `create_note`, `edit_note`, and `delete_note` tools.
 """
 
 
@@ -90,8 +95,8 @@ def build_schema() -> dict[str, object]:
                     {"name": "folder", "flag": "--folder", "type": "str", "default": ""},
                 ],
             },
-            "update": {
-                "description": "Update a uniquely matched note; omitted fields are preserved and requested changes are read back for verification",
+            "edit": {
+                "description": "Edit a uniquely matched note; omitted fields are preserved and requested changes are read back for verification",
                 "params": [
                     {"name": "title", "flag": "--title", "type": "str", "required": True, "description": "Current exact note title"},
                     {"name": "new_title", "flag": "--new-title", "type": "str", "required": False, "description": "New title; omitted means unchanged"},
@@ -102,6 +107,20 @@ def build_schema() -> dict[str, object]:
                 "match_policy": "Unique exact title only; missing or ambiguous matches fail without writing",
                 "success": "Read back the note and verify every requested field before reporting success",
             },
+            "delete": {
+                "description": "Delete a uniquely matched note after explicit confirmation",
+                "params": [
+                    {"name": "title", "flag": "--title", "type": "str", "required": True},
+                    {"name": "folder", "flag": "--folder", "type": "str", "required": False},
+                    {"name": "yes", "flag": "--yes", "type": "bool", "required": True},
+                ],
+                "match_policy": "Unique exact title only; missing or ambiguous matches fail without writing",
+            },
+            "update": {
+                "description": "Upgrade the installed inotes CLI using uv",
+                "params": [],
+                "command": ["uv", "tool", "upgrade", "inotes-mcp"],
+            },
             "version": {
                 "description": "Print package version",
                 "params": [],
@@ -110,11 +129,12 @@ def build_schema() -> dict[str, object]:
         "mcp_tools": {
             "show_note": {"description": "Show a uniquely matched note by exact title", "args": ["title", "folder"]},
             "create_note": {"description": "Create a note explicitly"},
-            "update_note": {
-                "description": "Update a uniquely matched note with the same partial-update semantics as the CLI",
+            "edit_note": {
+                "description": "Edit a uniquely matched note with the same partial-update semantics as the CLI",
                 "args": ["title", "new_title", "body", "folder"],
                 "requires_at_least_one_of": ["new_title", "body"],
             },
+            "delete_note": {"description": "Delete one uniquely matched note by exact title", "args": ["title", "folder"]},
         },
     }
 

@@ -214,6 +214,24 @@ def update_note(
     return message
 
 
+def delete_note(title: str, folder: str | None = None) -> str:
+    """Delete one uniquely matched note and verify it no longer exists."""
+    script = (
+        'tell application "Notes"\n'
+        f'  {_note_matches(title, folder)}'
+        '  set deletedTitle to name of targetNote as text\n'
+        '  set deletedId to id of targetNote as text\n'
+        '  delete targetNote\n'
+        '  set remainingNotes to every note whose id is deletedId\n'
+        '  if (count of remainingNotes) is not 0 then error "INOTES_DELETE_VERIFY_FAILED"\n'
+        '  return "OK deleted: " & deletedTitle\n'
+        'end tell\n'
+    )
+    result = _run_osascript(script)
+    _raise_resolution_error(result, title)
+    return result
+
+
 def create_note(title: str, body: str = "", folder: str = "") -> str:
     te = _as_escape(title)
     be = _as_escape(body)

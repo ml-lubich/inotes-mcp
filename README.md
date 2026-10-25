@@ -1,7 +1,7 @@
 # inotes — Apple Notes CLI
 
 `inotes` is a fast, scriptable command line for **Apple Notes** — list, search,
-read, create, and update notes from your terminal, with `-j`/`--json` flags
+read, create, edit, and delete notes from your terminal, with `-j`/`--json` flags
 where supported. Part of the `imsg` / `imail` / `inotes` / `wa` local-first
 tool family.
 
@@ -10,7 +10,8 @@ inotes list --limit 20
 inotes search "standup" --json
 inotes show "Project Plan"
 inotes create --title "Idea" --body "…"
-inotes update --title "Idea" --body "Revised text"
+inotes edit --title "Idea" --body "Revised text"
+inotes update
 ```
 
 ---
@@ -64,21 +65,26 @@ inotes search "standup" --limit 10 --json             # search titles + bodies
 inotes show "My Note"                                 # exact-title lookup
 inotes create --title "Idea" --body "…"               # new note
 inotes create --title "Work" --body "…" --folder "Projects"
-inotes update --title "Idea" --body "Revised text"    # replace body
-inotes update --title "Idea" --new-title "New Idea"  # rename only
-inotes update --title "Shared" --body "Revised" --folder "Work" # disambiguate duplicate title
+inotes edit --title "Idea" --body "Revised text"      # replace body
+inotes edit --title "Idea" --new-title "New Idea"    # rename only
+inotes edit --title "Shared" --body "Revised" --folder "Work" # disambiguate duplicate title
+inotes delete --title "Old Note" --yes                # permanent; explicit confirmation required
+inotes update                                           # upgrade the installed CLI
 inotes version
 inotes -h                                             # help at every level
 ```
 
-`show` and `update` require one exact title match. If a title is missing or
+`show`, `edit`, and `delete` require one exact title match. If a title is missing or
 ambiguous, `inotes` reports an error instead of choosing a note silently. When
-updating, omitted fields stay as they are; `--body` replaces the whole body,
-and `--body ""` intentionally clears it. Use `--folder` on `show` or `update`
+editing, omitted fields stay as they are; `--body` replaces the whole body,
+and `--body ""` intentionally clears it. Use `--folder` on `show`, `edit`, or `delete`
 to scope an exact-title match when duplicate titles exist; it does not move the
-note. A successful update is read back and verified. Reads and searches never
-write to Notes. `create --folder` targets a named folder; omit it to use the
-default account.
+note. A successful edit is read back and verified. `delete` requires `--yes`
+and removes only a uniquely matched note. Reads and searches never write to
+Notes. `create --folder` targets a named folder; omit it to use the default
+account. `inotes update` upgrades a uv-managed installation with
+`uv tool upgrade inotes-mcp`; Homebrew/pip installations should use their
+package manager's upgrade command.
 
 ---
 
@@ -91,7 +97,9 @@ default account.
 | `search` | Search note titles and bodies (`--limit`, `--json`) |
 | `show` | Show a note by exact title |
 | `create` | Create a note (`--title`, `--body`, `--folder`) |
-| `update` | Update a uniquely matched note's title/body (`--folder` scopes the source match) |
+| `edit` | Edit a uniquely matched note's title/body (`--folder` scopes the source match) |
+| `delete` | Permanently delete a uniquely matched note (`--yes` required) |
+| `update` | Upgrade the installed CLI with uv |
 | `version` | Print the installed version |
 | `mcp` | Run the built-in MCP server over stdio |
 | `agent schema` | Print a JSON command contract (version, tool, params per command) |
@@ -105,7 +113,7 @@ Help is available at every level: `inotes -h`, `inotes <command> -h`,
 ## Using inotes from an agent
 
 `inotes` is CLI-first by design — cheaper on tokens than a full MCP round
-trip for the common case of list/search/show/create/update. `inotes agent schema`
+trip for the common case of list/search/show/create/edit/delete. `inotes agent schema`
 gives an agent a machine-readable contract of every command and its
 parameters; `inotes agent guide` gives it a short playbook (the same rules
 documented above: run `doctor` first, `--json` on `list`/`search`, exit code
@@ -116,7 +124,7 @@ contact Notes.app. Notes automation runs only when a Notes command is invoked.
 
 `inotes mcp` runs a stdio MCP server exposing the same operations
 (`doctor`, `list_notes`, `search_notes`, `show_note`, `create_note`,
-`update_note`) as MCP
+`edit_note`, `delete_note`) as MCP
 tools — no separate package needed. Point any MCP client at the installed
 `inotes` command:
 
