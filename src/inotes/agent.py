@@ -20,6 +20,8 @@ inotes show "Note Title" [--folder "Folder"]
 inotes create --title "Title" [--body "…"] [--folder "Folder"]
 inotes edit --title "Current Title" [--new-title "New Title"] [--body "Replacement body"] [--folder "Folder"]
 inotes delete --title "Note Title" [--folder "Folder"] --yes
+inotes pin "Note Title" [--folder "Folder"]
+inotes unpin "Note Title" [--folder "Folder"]
 inotes update
 ```
 
@@ -31,6 +33,13 @@ it does not move the note.
 Successful edits are read back to verify the requested changes. `delete`
 requires `--yes` and removes only one uniquely matched title. `update` upgrades
 the installed CLI with `uv tool upgrade inotes-mcp`; it never edits notes.
+`pin` and `unpin` are idempotent and use the same exact-title/folder lookup.
+They select the note and invoke Notes.app's File > Pin Note menu through
+System Events because AppleScript has no pin property. This requires terminal
+UI scripting access in Automation and Accessibility settings. Pinning is
+available for upgraded iCloud notes and notes stored on the Mac; Recently
+Deleted notes cannot be pinned. Missing permission or an unavailable menu
+action is an error, not success.
 
 ## Discovery
 
@@ -50,8 +59,13 @@ inotes <command> -h    # per-command help
 - `list`, `search`, and `show` are read-only. `create`, `edit`, and `delete` write only
   when explicitly invoked.
 - `update` only upgrades the installed CLI; it does not change notes.
+- `pin` and `unpin` are idempotent, exact-title operations. Use `--folder` to
+  disambiguate; never guess.
+- Pinning uses Notes UI scripting through System Events and needs Automation
+  and Accessibility access. It may fail for unsupported accounts or folders.
 - `create --folder` targets a named folder; omit for the default account.
-- MCP offers matching `show_note`, `create_note`, `edit_note`, and `delete_note` tools.
+- MCP offers matching `show_note`, `create_note`, `edit_note`, `delete_note`,
+  `pin_note`, and `unpin_note` tools.
 """
 
 
@@ -116,6 +130,26 @@ def build_schema() -> dict[str, object]:
                 ],
                 "match_policy": "Unique exact title only; missing or ambiguous matches fail without writing",
             },
+            "pin": {
+                "description": "Pin a note by exact title; operation is idempotent and uses Notes UI scripting",
+                "params": [
+                    {"name": "title", "type": "str", "positional": True, "required": True},
+                    {"name": "folder", "flag": "--folder", "type": "str", "required": False},
+                ],
+                "permission": "Notes Automation and terminal UI scripting access through System Events",
+                "supported_notes": "Upgraded iCloud notes and notes stored on this Mac; not Recently Deleted",
+                "match_policy": "Unique exact title only; missing or ambiguous matches fail without UI action",
+            },
+            "unpin": {
+                "description": "Unpin a note by exact title; operation is idempotent and uses Notes UI scripting",
+                "params": [
+                    {"name": "title", "type": "str", "positional": True, "required": True},
+                    {"name": "folder", "flag": "--folder", "type": "str", "required": False},
+                ],
+                "permission": "Notes Automation and terminal UI scripting access through System Events",
+                "supported_notes": "Upgraded iCloud notes and notes stored on this Mac",
+                "match_policy": "Unique exact title only; missing or ambiguous matches fail without UI action",
+            },
             "update": {
                 "description": "Upgrade the installed inotes CLI using uv",
                 "params": [],
@@ -135,6 +169,8 @@ def build_schema() -> dict[str, object]:
                 "requires_at_least_one_of": ["new_title", "body"],
             },
             "delete_note": {"description": "Delete one uniquely matched note by exact title", "args": ["title", "folder"]},
+            "pin_note": {"description": "Pin one uniquely matched note via Notes UI scripting; idempotent", "args": ["title", "folder"]},
+            "unpin_note": {"description": "Unpin one uniquely matched note via Notes UI scripting; idempotent", "args": ["title", "folder"]},
         },
     }
 

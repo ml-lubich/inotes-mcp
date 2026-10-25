@@ -28,6 +28,18 @@ def show_note(title: str, folder: str | None = None) -> str:
         return notes.show_note(title)
     return notes.show_note(title, folder=folder)
 
+
+@mcp.tool()
+def pin_note(title: str, folder: str | None = None) -> str:
+    """Pin one uniquely matched note via Notes UI scripting; safe to repeat."""
+    return notes.pin_note(title, folder=folder)
+
+
+@mcp.tool()
+def unpin_note(title: str, folder: str | None = None) -> str:
+    """Unpin one uniquely matched note via Notes UI scripting; safe to repeat."""
+    return notes.unpin_note(title, folder=folder)
+
 @mcp.tool()
 def create_note(title: str, body: str = "", folder: str = "") -> str:
     """Create a new note in Apple Notes."""

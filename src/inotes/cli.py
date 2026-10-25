@@ -18,6 +18,8 @@ Examples:
   inotes list --limit 20
   inotes search "standup" --json
   inotes show "My Note"
+  inotes pin "Important note"
+  inotes unpin "Old project note"
   inotes create --title "Idea" --body "…"
   inotes edit --title "Old title" --new-title "New title" --body "Updated text"
   inotes update
@@ -125,6 +127,32 @@ def show_cmd(
     except notes.NotesError as exc:
         _die(str(exc))
     typer.echo(text)
+
+
+@app.command("pin")
+def pin_cmd(
+    title: Annotated[str, typer.Argument(help="Exact note title.")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder to disambiguate duplicate titles.")] = None,
+) -> None:
+    """Pin one uniquely matched note using Notes.app's File menu."""
+    try:
+        result = notes.pin_note(title, folder=folder)
+    except notes.NotesError as exc:
+        _die(str(exc))
+    typer.echo(result)
+
+
+@app.command("unpin")
+def unpin_cmd(
+    title: Annotated[str, typer.Argument(help="Exact note title.")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder to disambiguate duplicate titles.")] = None,
+) -> None:
+    """Unpin one uniquely matched note using Notes.app's File menu."""
+    try:
+        result = notes.unpin_note(title, folder=folder)
+    except notes.NotesError as exc:
+        _die(str(exc))
+    typer.echo(result)
 
 
 @app.command("create")

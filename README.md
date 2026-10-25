@@ -11,6 +11,8 @@ inotes search "standup" --json
 inotes show "Project Plan"
 inotes create --title "Idea" --body "…"
 inotes edit --title "Idea" --body "Revised text"
+inotes pin "Project Plan"
+inotes unpin "Project Plan"
 inotes update
 ```
 
@@ -69,6 +71,8 @@ inotes edit --title "Idea" --body "Revised text"      # replace body
 inotes edit --title "Idea" --new-title "New Idea"    # rename only
 inotes edit --title "Shared" --body "Revised" --folder "Work" # disambiguate duplicate title
 inotes delete --title "Old Note" --yes                # permanent; explicit confirmation required
+inotes pin "Important Note" --folder "Work"         # pin exact title in folder
+inotes unpin "Important Note"                       # unpin; safe to repeat
 inotes update                                           # upgrade the installed CLI
 inotes version
 inotes -h                                             # help at every level
@@ -86,6 +90,17 @@ account. `inotes update` upgrades a uv-managed installation with
 `uv tool upgrade inotes-mcp`; Homebrew/pip installations should use their
 package manager's upgrade command.
 
+`pin` and `unpin` use the same exact-title matching and optional `--folder`
+disambiguation as `show`. They are idempotent: repeating the requested state
+does not toggle it back. AppleScript does not expose a pin property, so these
+commands select the note and use Notes.app's **File → Pin Note** menu through
+System Events. This requires UI scripting access: allow the terminal to control
+Notes and System Events in Automation settings, and enable the terminal under
+**System Settings → Privacy & Security → Accessibility**. Pinning is supported
+for upgraded iCloud notes and notes stored on the Mac; Recently Deleted notes
+cannot be pinned. A missing permission or unavailable menu action is an error,
+not a success. See [Apple's pinning guide](https://support.apple.com/en-euro/guide/notes/apdb54e469b6/mac).
+
 ---
 
 ## Commands
@@ -99,6 +114,8 @@ package manager's upgrade command.
 | `create` | Create a note (`--title`, `--body`, `--folder`) |
 | `edit` | Edit a uniquely matched note's title/body (`--folder` scopes the source match) |
 | `delete` | Permanently delete a uniquely matched note (`--yes` required) |
+| `pin` | Pin one uniquely matched note (`--folder` scopes duplicate titles) |
+| `unpin` | Unpin one uniquely matched note (`--folder` scopes duplicate titles) |
 | `update` | Upgrade the installed CLI with uv |
 | `version` | Print the installed version |
 | `mcp` | Run the built-in MCP server over stdio |
@@ -113,7 +130,7 @@ Help is available at every level: `inotes -h`, `inotes <command> -h`,
 ## Using inotes from an agent
 
 `inotes` is CLI-first by design — cheaper on tokens than a full MCP round
-trip for the common case of list/search/show/create/edit/delete. `inotes agent schema`
+trip for the common case of list/search/show/create/edit/delete/pin/unpin. `inotes agent schema`
 gives an agent a machine-readable contract of every command and its
 parameters; `inotes agent guide` gives it a short playbook (the same rules
 documented above: run `doctor` first, `--json` on `list`/`search`, exit code
@@ -124,7 +141,7 @@ contact Notes.app. Notes automation runs only when a Notes command is invoked.
 
 `inotes mcp` runs a stdio MCP server exposing the same operations
 (`doctor`, `list_notes`, `search_notes`, `show_note`, `create_note`,
-`edit_note`, `delete_note`) as MCP
+`edit_note`, `delete_note`, `pin_note`, `unpin_note`) as MCP
 tools — no separate package needed. Point any MCP client at the installed
 `inotes` command:
 

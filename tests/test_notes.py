@@ -358,3 +358,70 @@ class TestDeleteNote:
             with pytest.raises(notes.NotesError):
                 notes.delete_note("Shared")
         assert mock_run.call_count == 1
+
+
+class TestPinUnpinNote:
+    @pytest.mark.parametrize(
+        ("operation", "expected"),
+        [("pin_note", "PINNED"), ("unpin_note", "UNPINNED")],
+    )
+    def test_pin_actions_use_exact_title_and_file_menu(self, operation: str, expected: str) -> None:
+        with patch.object(notes, "_run_osascript", return_value=expected) as mock_run:
+            result = getattr(notes, operation)("Shared", folder="Work")
+        assert result == expected
+        script = mock_run.call_args.args[0]
+        assert 'name is "Shared"' in script
+        assert 'every folder whose name is "Work"' in script
+        assert script.index("count of matchingNotes") < script.index('tell application "System Events"')
+        assert 'menu item "Pin Note"' in script
+        assert 'menu item "Unpin Note"' in script
+        assert "set selection of application \"Notes\"" in script
+
+    @pytest.mark.parametrize(
+        ("operation", "already", "opposite"),
+        [
+            ("pin_note", "ALREADY_PINNED", "Unpin Note"),
+            ("unpin_note", "ALREADY_UNPINNED", "Pin Note"),
+        ],
+    )
+    def test_already_requested_state_is_reported_without_toggling(
+        self, operation: str, already: str, opposite: str,
+    ) -> None:
+        with patch.object(notes, "_run_osascript", return_value=already) as mock_run:
+            result = getattr(notes, operation)("Title")
+        assert result == already
+        script = mock_run.call_args.args[0]
+        assert f'return "{already}"' in script
+        assert f'menu item "{opposite}"' in script
+
+    @pytest.mark.parametrize(
+        ("operation", "raw", "error_type"),
+        [
+            ("pin_note", "INOTES_ERROR_NOT_FOUND", notes.NoteNotFoundError),
+            ("unpin_note", "INOTES_ERROR_AMBIGUOUS:Work, Home", notes.AmbiguousNoteTitleError),
+        ],
+    )
+    def test_missing_or_ambiguous_titles_fail_before_ui_scripting(
+        self, operation: str, raw: str, error_type: type[Exception],
+    ) -> None:
+        with patch.object(notes, "_run_osascript", return_value=raw) as mock_run:
+            with pytest.raises(error_type):
+                getattr(notes, operation)("Title")
+        script = mock_run.call_args.args[0]
+        resolution_marker = raw.partition(":")[0]
+        assert script.index(resolution_marker) < script.index('tell application "System Events"')
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["INOTES_ERROR_PIN_NOT_SUPPORTED", "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"],
+    )
+    def test_unsupported_note_or_unverifiable_menu_state_fails(self, raw: str) -> None:
+        with patch.object(notes, "_run_osascript", return_value=raw):
+            with pytest.raises(notes.NotesError):
+                notes.pin_note("Title")
+
+    def test_ui_scripting_permission_error_is_actionable_and_propagated(self) -> None:
+        message = "not authorized to send Apple Events to System Events; allow Accessibility access"
+        with patch.object(notes, "_run_osascript", side_effect=notes.NotesError(message)):
+            with pytest.raises(notes.NotesError, match="Accessibility"):
+                notes.unpin_note("Title")

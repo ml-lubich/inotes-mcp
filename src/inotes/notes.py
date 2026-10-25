@@ -232,6 +232,110 @@ def delete_note(title: str, folder: str | None = None) -> str:
     return result
 
 
+def _set_note_pin_state(title: str, *, pinned: bool, folder: str | None = None) -> str:
+    """Set pin state through Notes.app's File menu and verify the menu state."""
+    action = "Pin Note" if pinned else "Unpin Note"
+    opposite = "Unpin Note" if pinned else "Pin Note"
+    changed = "PINNED" if pinned else "UNPINNED"
+    already = "ALREADY_PINNED" if pinned else "ALREADY_UNPINNED"
+    script = (
+        'tell application "Notes"\n'
+        f'  {_note_matches(title, folder)}'
+        '  if (name of container of targetNote as text) is "Recently Deleted" then return "INOTES_ERROR_PIN_NOT_SUPPORTED"\n'
+        '  set selection of application "Notes" to {targetNote}\n'
+        '  activate\n'
+        'end tell\n'
+        'tell application "System Events"\n'
+        '  tell process "Notes"\n'
+        '    if not (exists menu bar item "File" of menu bar 1) then return "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
+        '    click menu bar item "File" of menu bar 1\n'
+        '    set fileMenu to menu 1 of menu bar item "File" of menu bar 1\n'
+        '    set canPin to false\n'
+        '    set canUnpin to false\n'
+        '    try\n'
+        '      set canPin to enabled of menu item "Pin Note" of fileMenu\n'
+        '    end try\n'
+        '    try\n'
+        '      set canUnpin to enabled of menu item "Unpin Note" of fileMenu\n'
+        '    end try\n'
+    )
+    if pinned:
+        script += (
+            '    if canPin and not canUnpin then\n'
+            f'      click menu item "{action}" of fileMenu\n'
+            '      click menu bar item "File" of menu bar 1\n'
+            '      set verifyMenu to menu 1 of menu bar item "File" of menu bar 1\n'
+            '      set verifiedUnpin to false\n'
+            '      try\n'
+            '        set verifiedUnpin to enabled of menu item "Unpin Note" of verifyMenu\n'
+            '      end try\n'
+            '      key code 53\n'
+            f'      if verifiedUnpin then return "{changed}"\n'
+            '      return "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
+            '    else if canUnpin and not canPin then\n'
+            '      key code 53\n'
+            f'      return "{already}"\n'
+            '    end if\n'
+        )
+    else:
+        script += (
+            '    if canUnpin and not canPin then\n'
+            f'      click menu item "{action}" of fileMenu\n'
+            '      click menu bar item "File" of menu bar 1\n'
+            '      set verifyMenu to menu 1 of menu bar item "File" of menu bar 1\n'
+            '      set verifiedPin to false\n'
+            '      try\n'
+            '        set verifiedPin to enabled of menu item "Pin Note" of verifyMenu\n'
+            '      end try\n'
+            '      key code 53\n'
+            f'      if verifiedPin then return "{changed}"\n'
+            '      return "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
+            '    else if canPin and not canUnpin then\n'
+            '      key code 53\n'
+            f'      return "{already}"\n'
+            '    end if\n'
+        )
+    script += (
+        '    key code 53\n'
+        '    return "INOTES_ERROR_PIN_NOT_SUPPORTED"\n'
+        '  end tell\n'
+        'end tell\n'
+    )
+
+    try:
+        result = _run_osascript(script)
+    except NotesError as exc:
+        raise NotesError(
+            "Notes pinning uses UI scripting. Allow your terminal to control Notes and System Events "
+            "in Privacy & Security > Automation, and enable it under Accessibility. "
+            f"Pin state was not confirmed: {exc}"
+        ) from exc
+    _raise_resolution_error(result, title)
+    if result == "INOTES_ERROR_PIN_NOT_SUPPORTED":
+        raise NotesError(
+            "This note cannot be pinned here. Notes does not support pinning Recently Deleted notes "
+            "or notes in unsupported accounts."
+        )
+    if result == "INOTES_ERROR_PIN_UI_STATE_UNKNOWN":
+        raise NotesError(
+            "Notes did not expose a verifiable Pin Note/Unpin Note menu state. "
+            "Check the selected note, account support, and UI scripting permissions."
+        )
+    if result not in {changed, already}:
+        raise NotesError(f"Unexpected Notes pin result: {result or 'empty response'}")
+    return result
+
+
+def pin_note(title: str, folder: str | None = None) -> str:
+    """Pin one uniquely matched note, or report that it is already pinned."""
+    return _set_note_pin_state(title, pinned=True, folder=folder)
+
+
+def unpin_note(title: str, folder: str | None = None) -> str:
+    """Unpin one uniquely matched note, or report that it is already unpinned."""
+    return _set_note_pin_state(title, pinned=False, folder=folder)
+
+
 def create_note(title: str, body: str = "", folder: str = "") -> str:
     te = _as_escape(title)
     be = _as_escape(body)

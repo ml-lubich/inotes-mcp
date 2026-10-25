@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from inotes import mcp
+from inotes import mcp, notes
 
 def test_mcp_tools():
     assert callable(mcp.doctor)
@@ -12,6 +12,8 @@ def test_mcp_tools():
     assert callable(mcp.create_note)
     assert callable(mcp.edit_note)
     assert callable(mcp.delete_note)
+    assert callable(mcp.pin_note)
+    assert callable(mcp.unpin_note)
 
 def test_mcp_run_server(monkeypatch):
     called = False
@@ -87,6 +89,21 @@ class TestMcpToolsDelegateToNotes:
             assert mcp.delete_note("Title", folder="Work") == "OK deleted: Title"
         m.assert_called_once_with("Title", folder="Work")
 
+    @pytest.mark.parametrize(
+        ("tool", "core", "state"),
+        [("pin_note", "pin_note", "PINNED"), ("unpin_note", "unpin_note", "UNPINNED")],
+    )
+    def test_pin_tools_delegate_with_optional_folder(self, tool: str, core: str, state: str) -> None:
+        with patch(f"inotes.mcp.notes.{core}", return_value=state) as mock_action:
+            assert getattr(mcp, tool)("Shared", folder="Work") == state
+        mock_action.assert_called_once_with("Shared", folder="Work")
+
+    @pytest.mark.parametrize("tool", ["pin_note", "unpin_note"])
+    def test_pin_tool_propagates_permission_and_resolution_errors(self, tool: str) -> None:
+        with patch(f"inotes.mcp.notes.{tool}", side_effect=notes.NotesError("UI scripting permission required")):
+            with pytest.raises(notes.NotesError, match="permission"):
+                getattr(mcp, tool)("Title")
+
     def test_notes_error_propagates_uncaught(self) -> None:
         # The MCP layer does no error translation of its own — a NotesError
         # (e.g. missing Automation permission) must surface to the MCP
@@ -120,6 +137,11 @@ class TestMcpToolsInvalidInput:
     def test_edit_note_missing_title_raises_type_error(self) -> None:
         with pytest.raises(TypeError):
             mcp.edit_note()  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize("tool", ["pin_note", "unpin_note"])
+    def test_pin_tool_missing_title_raises_type_error(self, tool: str) -> None:
+        with pytest.raises(TypeError):
+            getattr(mcp, tool)()  # type: ignore[call-arg]
 
     def test_list_notes_rejects_unexpected_keyword(self) -> None:
         with pytest.raises(TypeError):

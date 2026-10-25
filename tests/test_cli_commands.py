@@ -241,6 +241,35 @@ class TestDeleteCmd:
         mock_delete.assert_called_once_with("Title", folder="Work")
 
 
+class TestPinUnpinCmd:
+    @pytest.mark.parametrize(
+        ("command", "backend", "message"),
+        [("pin", "pin_note", "PINNED"), ("unpin", "unpin_note", "UNPINNED")],
+    )
+    def test_pin_commands_forward_exact_title_and_optional_folder(
+        self, command: str, backend: str, message: str,
+    ) -> None:
+        with patch(f"inotes.cli.notes.{backend}", return_value=message) as mock_action:
+            result = runner.invoke(app, [command, "Shared", "--folder", "Work"])
+        assert result.exit_code == 0, result.output
+        assert message in result.output
+        mock_action.assert_called_once_with("Shared", folder="Work")
+
+    @pytest.mark.parametrize("command,backend", [("pin", "pin_note"), ("unpin", "unpin_note")])
+    def test_pin_command_propagates_ui_permission_and_state_errors(self, command: str, backend: str) -> None:
+        with patch(f"inotes.cli.notes.{backend}", side_effect=notes.NotesError("Accessibility permission required")):
+            result = runner.invoke(app, [command, "Title"])
+        assert result.exit_code == 1
+        assert "Accessibility permission required" in result.output
+
+    @pytest.mark.parametrize("command", ["pin", "unpin"])
+    def test_pin_commands_have_both_help_forms(self, command: str) -> None:
+        for flag in ("-h", "--help"):
+            result = runner.invoke(app, [command, flag])
+            assert result.exit_code == 0, result.output
+            assert "--folder" in result.output
+
+
 class TestVersionCmd:
     def test_version_command(self) -> None:
         result = runner.invoke(app, ["version"])
