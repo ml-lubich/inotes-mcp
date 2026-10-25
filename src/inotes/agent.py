@@ -208,8 +208,15 @@ def build_schema() -> dict[str, object]:
                 "description": "Print package version",
                 "params": [],
             },
+            "mcp": {
+                "description": "Run the built-in MCP server over stdio",
+                "params": [],
+            },
         },
         "mcp_tools": {
+            "doctor": {"description": "Verify Notes.app Automation access", "args": []},
+            "list_notes": {"description": "List recent note titles", "args": ["limit"]},
+            "search_notes": {"description": "Search note titles and bodies", "args": ["query", "limit"]},
             "show_note": {"description": "Show a uniquely matched note by exact title", "args": ["title", "folder"]},
             "create_note": {"description": "Create a note explicitly"},
             "edit_note": {

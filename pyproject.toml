@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inotes-mcp"
-version = "0.1.1"
+version = "0.3.0"
 description = "inotes-mcp — Apple Notes CLI (inotes) + MCP-friendly agent schema. Typer."
 readme = "README.md"
 requires-python = ">=3.10"

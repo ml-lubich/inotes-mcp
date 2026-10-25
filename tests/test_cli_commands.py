@@ -9,8 +9,8 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
+from inotes import __version__, notes
 from inotes.cli import app
-from inotes import notes
 
 runner = CliRunner()
 
@@ -39,12 +39,12 @@ class TestMainCallback:
         # "Missing command." instead of printing the version and exiting 0.
         result = runner.invoke(app, ["-V"])
         assert result.exit_code == 0, result.output
-        assert result.output.strip() == "0.1.1"
+        assert result.output.strip() == __version__
 
     def test_long_version_flag_real_invocation(self) -> None:
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0, result.output
-        assert result.output.strip() == "0.1.1"
+        assert result.output.strip() == __version__
 
     def test_callback_help_when_no_subcommand(self) -> None:
         import typer
@@ -332,7 +332,7 @@ class TestVersionCmd:
     def test_version_command(self) -> None:
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
-        assert "0.1." in result.output
+        assert result.output.strip() == __version__
 
 
 class TestAgentCmds:

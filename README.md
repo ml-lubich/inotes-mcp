@@ -159,11 +159,12 @@ contact Notes.app. Notes automation runs only when a Notes command is invoked.
 
 ### Built-in MCP server
 
-`inotes mcp` runs a stdio MCP server exposing the same operations
+`inotes mcp` runs a stdio MCP server exposing the CLI's Notes operations
 (`doctor`, `list_notes`, `search_notes`, `show_note`, `create_note`,
 `edit_note`, `delete_note`, `pin_note`, `unpin_note`, `attach_file_to_note`,
 `list_note_attachments`, `list_note_links`) as MCP
-tools — no separate package needed. Point any MCP client at the installed
+tools — no separate package needed. `inotes agent schema` lists every CLI
+command and registered MCP tool. Point any MCP client at the installed
 `inotes` command:
 
 ```json

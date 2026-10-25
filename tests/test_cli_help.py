@@ -7,6 +7,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
+from inotes import __version__
 from inotes.cli import app
 
 runner = CliRunner()
@@ -60,14 +61,14 @@ def test_root_help_hides_generated_completion_options() -> None:
 def test_root_version_shortcuts(flag: str) -> None:
     result = runner.invoke(app, [flag])
     assert result.exit_code == 0
-    assert "0.1.1" in result.output
+    assert __version__ in result.output
 
 
 def test_agent_schema_json() -> None:
     result = runner.invoke(app, ["agent", "schema"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["version"] == "0.1.1"
+    assert payload["version"] == __version__
     assert payload["tool"] == "inotes"
     commands = payload["commands"]
     assert isinstance(commands, dict)
