@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -209,6 +211,10 @@ class TestShowNote:
         script = mock_run.call_args.args[0]
         assert 'name is "Title"' in script
         assert 'every folder whose name is "Work"' in script
+        assert "set sourceFolderIDs to {}" in script
+        assert "id of contents of folderRef as text" in script
+        assert "sourceFolderIDs contains candidateFolderID" in script
+        assert "set candidateFolder to container of candidateNote" in script
 
     def test_show_resolves_exact_title_and_rejects_duplicate_titles(self) -> None:
         with patch.object(notes, "_run_osascript", return_value="Title\n\nBody") as mock_run:
@@ -258,6 +264,14 @@ class TestUpdateNote:
         assert 'every folder whose name is "Work"' in script
         assert 'set name of targetNote to "New title"' in script
         assert "set body of targetNote" not in script
+
+    def test_updates_body_before_title_when_both_fields_are_supplied(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="OK updated: New title") as mock_run:
+            notes.update_note("Old title", new_title="New title", body="Updated body")
+        script = mock_run.call_args_list[0].args[0]
+        assert script.index('set body of targetNote to "Updated body"') < script.index(
+            'set name of targetNote to "New title"'
+        )
 
     @pytest.mark.parametrize("message", ["Note not found: Missing", "Ambiguous note title: Shared"])
     def test_update_does_not_write_when_title_is_missing_or_ambiguous(self, message: str) -> None:
@@ -381,10 +395,17 @@ class TestPinUnpinNote:
         script = mock_run.call_args.args[0]
         assert 'name is "Shared"' in script
         assert 'every folder whose name is "Work"' in script
-        assert script.index("count of matchingNotes") < script.index('tell application "System Events"')
+        assert script.index("count of matchingNotes") < script.index('set frontmost of notesProcess to true')
         assert 'menu item "Pin Note"' in script
         assert 'menu item "Unpin Note"' in script
         assert "set selection of application \"Notes\"" in script
+        assert script.index("set previousFrontmost") < script.index('tell application "Notes"')
+        assert 'set frontmost of notesProcess to true' in script
+        assert "if frontmost then" in script
+        assert 'set fileMenuOpened to false' in script
+        assert script.index('if fileMenuOpened and frontmost of notesProcess then') < script.index('key code 53')
+        assert 'set frontmost of process previousFrontmost to true' in script
+        assert 'show targetNote' in script
 
     @pytest.mark.parametrize(
         ("operation", "already", "opposite"),
@@ -400,7 +421,7 @@ class TestPinUnpinNote:
             result = getattr(notes, operation)("Title")
         assert result == already
         script = mock_run.call_args.args[0]
-        assert f'return "{already}"' in script
+        assert f'set pinResult to "{already}"' in script
         assert f'menu item "{opposite}"' in script
 
     @pytest.mark.parametrize(
@@ -418,7 +439,7 @@ class TestPinUnpinNote:
                 getattr(notes, operation)("Title")
         script = mock_run.call_args.args[0]
         resolution_marker = raw.partition(":")[0]
-        assert script.index(resolution_marker) < script.index('tell application "System Events"')
+        assert script.index(resolution_marker) < script.index('set frontmost of notesProcess to true')
 
     @pytest.mark.parametrize(
         "raw",
@@ -435,8 +456,53 @@ class TestPinUnpinNote:
             with pytest.raises(notes.NotesError, match="Accessibility"):
                 notes.unpin_note("Title")
 
+    def test_ui_scripting_error_return_is_actionable(self) -> None:
+        with patch.object(
+            notes,
+            "_run_osascript",
+            return_value="INOTES_ERROR_PIN_UI:not authorized to control Notes",
+        ):
+            with pytest.raises(notes.NotesError, match="control Notes"):
+                notes.pin_note("Title")
+
+    def test_pin_does_not_read_unsupported_note_container_property(self) -> None:
+        with patch.object(notes, "_run_osascript", return_value="PINNED") as mock_run:
+            notes.pin_note("Title")
+        assert "container of targetNote" not in mock_run.call_args.args[0]
+
 
 class TestNoteLinks:
+    def test_protobuf_parser_handles_wire_types_and_rejects_malformed_data(self) -> None:
+        assert notes._read_varint(b"\x80", 0) is None
+        assert notes._parse_note_message(b"\x00") is None
+        assert notes._parse_note_message(b"\x08\x80") is None
+        assert notes._parse_note_message(b"\x0a\x05x") is None
+        assert notes._parse_note_message(b"\x0b") is None
+        assert notes._parse_note_message(b"\x0a\x01\xff") == {1: [""]}
+        assert notes._parse_note_message(b"\x09abcdefgh\x0dWXYZ") == {1: [b"abcdefgh", b"WXYZ"]}
+        assert notes._parse_note_message(b"\x0a\x00", depth=17) is None
+
+    def test_blob_reader_skips_empty_data_and_rejects_corrupt_compression_and_protobuf(self) -> None:
+        links: list[dict[str, str]] = []
+        seen: set[tuple[int, str]] = set()
+        notes._links_from_note_store_blob(None, "Empty", 1, links, seen)
+        notes._links_from_note_store_blob(b"", "Empty", 1, links, seen)
+        assert links == []
+        with pytest.raises(notes.NotesError, match="compressed"):
+            notes._links_from_note_store_blob(b"not gzip", "Bad", 2, links, seen)
+        with pytest.raises(notes.NotesError, match="unsupported note data"):
+            notes._links_from_note_store_blob(gzip.compress(b"\\x00"), "Bad", 3, links, seen)
+
+    def test_sqlite_store_schema_fallback_and_link_validation(self, tmp_path) -> None:
+        unsupported = tmp_path / "unsupported.sqlite"
+        sqlite3.connect(unsupported).close()
+        with pytest.raises(notes._NoteStoreUnsupported):
+            notes._list_note_links_from_store(unsupported)
+        assert notes._is_supported_link("mailto:help@example.test")
+        assert not notes._is_supported_link("https://")
+        assert not notes._is_supported_link("file:///tmp/private")
+        assert notes._parse_note_message(b"\x0a\x01\xff\x08\x01") == {1: ["", 1]}
+
     def test_extracts_html_and_plain_links_with_labels_and_entities(self) -> None:
         html = (
             '<div><a href="https://example.test/path?a=1&amp;b=2">Example &amp; Docs</a></div>'
@@ -449,8 +515,8 @@ class TestNoteLinks:
             {"note_title": "Reference note", "label": "email", "url": "mailto:help@example.test"},
         ]
 
-    def test_deduplicates_same_note_url_but_keeps_source_note_attribution(self) -> None:
-        with patch.object(
+    def test_deduplicates_same_note_url_but_keeps_source_note_attribution(self, tmp_path) -> None:
+        with patch.object(notes, "_NOTE_STORE_PATH", tmp_path / "missing.sqlite"), patch.object(
             notes,
             "_run_osascript",
             return_value=(
@@ -467,10 +533,57 @@ class TestNoteLinks:
             {"note_title": "Second note", "label": "Same", "url": "https://same.test"},
         ]
         script = mock_run.call_args.args[0]
-        assert "body of allNotes" in script
-        assert "repeat with noteIndex" in script
+        assert "properties of noteRef" in script
+        assert "body of noteProps" in script
         assert "ASCII character 30" in script
         assert "ASCII character 31" in script
+
+    def test_reads_link_labels_and_plain_urls_from_read_only_notes_store(self, tmp_path) -> None:
+        def varint(value: int) -> bytes:
+            output = bytearray()
+            while value > 0x7F:
+                output.append((value & 0x7F) | 0x80)
+                value >>= 7
+            output.append(value)
+            return bytes(output)
+
+        def bytes_field(field_number: int, value: bytes) -> bytes:
+            return varint((field_number << 3) | 2) + varint(len(value)) + value
+
+        label = b"Readable label"
+        linked_url = b"https://linked.test/page"
+        plain_url = b"https://plain.test/page"
+        link_run = bytes_field(2, label) + bytes_field(5, bytes_field(9, linked_url))
+        plain_run = bytes_field(2, b"Plain URL: " + plain_url)
+        # Match Notes' actual top-level envelope: scalar metadata mixed with a
+        # nested content message, rather than one all-text field.
+        note_body = varint(8) + varint(0) + bytes_field(
+            2, bytes_field(3, link_run) + bytes_field(3, plain_run)
+        )
+
+        store = tmp_path / "NoteStore.sqlite"
+        db = sqlite3.connect(store)
+        db.execute("CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER, ZTITLE1 TEXT, ZNOTEDATA INTEGER)")
+        db.execute("CREATE TABLE ZICNOTEDATA (Z_PK INTEGER, ZNOTE INTEGER, ZDATA BLOB)")
+        db.execute("INSERT INTO ZICCLOUDSYNCINGOBJECT VALUES (1, 'Source note', 1)")
+        db.execute("INSERT INTO ZICNOTEDATA VALUES (1, 1, ?)", (gzip.compress(note_body),))
+        db.commit()
+        db.close()
+
+        with patch.object(notes, "_NOTE_STORE_PATH", store):
+            rows = notes.list_note_links()
+        assert rows == [
+            {"note_title": "Source note", "label": "Readable label", "url": "https://linked.test/page"},
+            {"note_title": "Source note", "label": "https://plain.test/page", "url": "https://plain.test/page"},
+        ]
+
+    def test_unreadable_note_count_fails_instead_of_silently_exporting_partial_links(self, tmp_path) -> None:
+        raw = "INOTES_META" + chr(31) + "1"
+        with patch.object(notes, "_NOTE_STORE_PATH", tmp_path / "missing.sqlite"), patch.object(
+            notes, "_run_osascript", return_value=raw,
+        ):
+            with pytest.raises(notes.NotesError, match="1 note"):
+                notes.list_note_links()
 
 
 class TestAttachments:

@@ -45,7 +45,8 @@ System Events because AppleScript has no pin property. This requires terminal
 UI scripting access in Automation and Accessibility settings. Pinning is
 available for upgraded iCloud notes and notes stored on the Mac; Recently
 Deleted notes cannot be pinned. Missing permission or an unavailable menu
-action is an error, not success.
+action is an error, not success. The command briefly brings Notes forward and
+then restores the app that was frontmost.
 `attach` adds one local file at a time and verifies the created attachment;
 `attachments` lists attachment names and IDs on one exact-title note. Supported
 file types depend on the Notes account; Exchange notes do not support file

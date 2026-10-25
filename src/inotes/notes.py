@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import gzip
+import html
 from html.parser import HTMLParser
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+import sqlite3
 import subprocess
 
 
@@ -25,6 +28,7 @@ _PLAIN_URL = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}"
 _LINK_SCHEMES = {"http", "https", "mailto", "tel"}
 _OSASCRIPT_TIMEOUT_SECONDS = 180
+_NOTE_STORE_PATH = Path.home() / "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 
 
 class _NoteLinkParser(HTMLParser):
@@ -89,9 +93,15 @@ def _note_matches(title: str, folder: str | None = None) -> str:
     if folder:
         escaped_folder = _as_escape(folder)
         script += f'''set sourceFolders to every folder whose name is "{escaped_folder}"
+set sourceFolderIDs to {{}}
+repeat with folderRef in sourceFolders
+  set end of sourceFolderIDs to id of contents of folderRef as text
+end repeat
 set scopedNotes to {{}}
 repeat with candidateNote in matchingNotes
-  if (container of candidateNote) is in sourceFolders then
+  set candidateFolder to container of candidateNote
+  set candidateFolderID to id of candidateFolder as text
+  if sourceFolderIDs contains candidateFolderID then
     set end of scopedNotes to contents of candidateNote
   end if
 end repeat
@@ -102,7 +112,8 @@ if matchCount is 0 then return "INOTES_ERROR_NOT_FOUND"
 if matchCount > 1 then
   set matchingFolders to ""
   repeat with candidateNote in matchingNotes
-    set candidateFolder to name of container of candidateNote as text
+    set candidateFolder to container of candidateNote
+    set candidateFolder to name of candidateFolder as text
     if matchingFolders does not contain candidateFolder then
       if matchingFolders is not "" then set matchingFolders to matchingFolders & ", "
       set matchingFolders to matchingFolders & candidateFolder
@@ -221,31 +232,228 @@ def extract_links_from_html(body_html: str, note_title: str) -> list[dict[str, s
     return rows
 
 
+def _read_varint(data: bytes, position: int) -> tuple[int, int] | None:
+    value = 0
+    shift = 0
+    while position < len(data) and shift <= 63:
+        byte = data[position]
+        position += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, position
+        shift += 7
+    return None
+
+
+def _parse_note_message(data: bytes, *, depth: int = 0) -> dict[int, list[object]] | None:
+    """Decode Notes' gzip-compressed protobuf envelope without importing a schema."""
+    if depth > 16:
+        return None
+    message: dict[int, list[object]] = {}
+    position = 0
+    fields_seen = 0
+    while position < len(data) and fields_seen < 100_000:
+        decoded_key = _read_varint(data, position)
+        if decoded_key is None:
+            return None
+        key, position = decoded_key
+        field_number, wire_type = key >> 3, key & 7
+        if field_number == 0:
+            return None
+        fields_seen += 1
+        value: object
+        if wire_type == 0:
+            decoded_value = _read_varint(data, position)
+            if decoded_value is None:
+                return None
+            value, position = decoded_value
+        elif wire_type in (1, 5):
+            size = 8 if wire_type == 1 else 4
+            if position + size > len(data):
+                return None
+            value = data[position : position + size]
+            position += size
+        elif wire_type == 2:
+            decoded_size = _read_varint(data, position)
+            if decoded_size is None:
+                return None
+            size, position = decoded_size
+            if position + size > len(data):
+                return None
+            payload = data[position : position + size]
+            position += size
+            try:
+                text_value = payload.decode("utf-8")
+            except UnicodeDecodeError:
+                text_value = ""
+            is_readable_text = all(
+                character.isprintable() or character in "\r\n\t" for character in text_value
+            ) and _parse_note_message(payload, depth=depth + 1) is None
+            if is_readable_text:
+                value = text_value
+            else:
+                nested = _parse_note_message(payload, depth=depth + 1)
+                if nested is None:
+                    continue
+                value = nested
+        else:
+            return None
+        message.setdefault(field_number, []).append(value)
+    if position != len(data):
+        return None
+    return message
+
+
+def _iter_note_strings(message: dict[int, list[object]]):
+    for field_number, values in message.items():
+        for value in values:
+            if isinstance(value, str):
+                yield field_number, value
+            elif isinstance(value, dict):
+                yield from _iter_note_strings(value)
+
+
+def _iter_note_messages(message: dict[int, list[object]]):
+    yield message
+    for values in message.values():
+        for value in values:
+            if isinstance(value, dict):
+                yield from _iter_note_messages(value)
+
+
+def _is_supported_link(url: str) -> bool:
+    parsed = urlsplit(url.strip())
+    return parsed.scheme.lower() in _LINK_SCHEMES and (
+        parsed.scheme.lower() not in {"http", "https"} or bool(parsed.netloc)
+    )
+
+
+def _links_from_note_store_blob(
+    blob: bytes | None,
+    note_title: str,
+    note_id: int,
+    links: list[dict[str, str]],
+    seen: set[tuple[int, str]],
+) -> None:
+    if not blob:
+        return
+    try:
+        decoded = gzip.decompress(blob)
+    except (OSError, EOFError) as exc:
+        raise NotesError("Notes returned an unreadable compressed note record; no partial inventory was written.") from exc
+    message = _parse_note_message(decoded)
+    if message is None:
+        raise NotesError("Notes returned an unsupported note data format; no partial inventory was written.")
+
+    def add(url: str, label: str) -> None:
+        cleaned = url.strip().rstrip(_TRAILING_URL_PUNCTUATION)
+        if not _is_supported_link(cleaned):
+            return
+        key = (note_id, cleaned)
+        if key not in seen:
+            seen.add(key)
+            links.append({"note_title": note_title, "label": label.strip() or cleaned, "url": cleaned})
+
+    # Links in Notes' rich-text protobuf are stored on a text run's field-5
+    # attributes; field 9 carries the target URL and field 2 carries its label.
+    for run in _iter_note_messages(message):
+        labels = [value for value in run.get(2, []) if isinstance(value, str) and value.strip()]
+        attributes = [value for value in run.get(5, []) if isinstance(value, dict)]
+        for attribute in attributes:
+            for _, value in _iter_note_strings(attribute):
+                if _is_supported_link(value):
+                    add(value, labels[0] if labels else value)
+
+    # Plain URLs are text in the note body and have no rich-text URL attribute.
+    for _, text_value in _iter_note_strings(message):
+        for match in _PLAIN_URL.finditer(text_value):
+            url = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
+            add(url, url)
+
+
+def _list_note_links_from_store(path: Path) -> list[dict[str, str]]:
+    """Fast read-only path for the local Notes store; fallback handles other layouts."""
+    uri = path.resolve().as_uri() + "?mode=ro"
+    try:
+        db = sqlite3.connect(uri, uri=True, timeout=5)
+    except sqlite3.Error as exc:
+        raise _NoteStoreUnsupported from exc
+    try:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {"ZICCLOUDSYNCINGOBJECT", "ZICNOTEDATA"}.issubset(tables):
+            raise _NoteStoreUnsupported
+        note_columns = {row[1] for row in db.execute("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT)")}
+        data_columns = {row[1] for row in db.execute("PRAGMA table_info(ZICNOTEDATA)")}
+        if not {"Z_PK", "ZTITLE1"}.issubset(note_columns) or not {"ZNOTE", "ZDATA"}.issubset(data_columns):
+            raise _NoteStoreUnsupported
+        query = '''\
+SELECT note.Z_PK, note.ZTITLE1, data.ZDATA
+FROM ZICCLOUDSYNCINGOBJECT AS note
+LEFT JOIN ZICNOTEDATA AS data ON data.ZNOTE = note.Z_PK
+WHERE note.ZTITLE1 IS NOT NULL AND data.ZNOTE IS NOT NULL
+ORDER BY note.Z_PK
+'''
+        links: list[dict[str, str]] = []
+        seen: set[tuple[int, str]] = set()
+        for note_id, note_title, body_blob in db.execute(query):
+            _links_from_note_store_blob(body_blob, str(note_title), int(note_id), links, seen)
+        return links
+    except sqlite3.Error as exc:
+        raise _NoteStoreUnsupported from exc
+    finally:
+        db.close()
+
+
+class _NoteStoreUnsupported(Exception):
+    """Private on-disk Notes schema is unavailable; use the AppleScript fallback."""
+
+
 def list_note_links() -> list[dict[str, str]]:
     """Scan all Notes HTML bodies once and return only external link records."""
+    if _NOTE_STORE_PATH.is_file():
+        try:
+            return _list_note_links_from_store(_NOTE_STORE_PATH)
+        except _NoteStoreUnsupported:
+            pass
     script = '''\
 tell application "Notes"
   set recordSeparator to ASCII character 30
   set fieldSeparator to ASCII character 31
   set outputText to ""
+  set skippedCount to 0
   set allNotes to every note
-  set noteTitles to name of allNotes
-  set noteIDs to id of allNotes
-  set noteBodies to body of allNotes
-  repeat with noteIndex from 1 to count of allNotes
-    set noteTitle to item noteIndex of noteTitles as text
-    set noteID to item noteIndex of noteIDs as text
-    set noteBody to item noteIndex of noteBodies as text
-    if outputText is not "" then set outputText to outputText & recordSeparator
-    set outputText to outputText & noteTitle & fieldSeparator & noteID & fieldSeparator & noteBody
+  repeat with noteRef in allNotes
+    try
+      set noteProps to properties of noteRef
+      set noteTitle to name of noteProps as text
+      set noteID to id of noteProps as text
+      set noteBody to body of noteProps as text
+      if outputText is not "" then set outputText to outputText & recordSeparator
+      set outputText to outputText & noteTitle & fieldSeparator & noteID & fieldSeparator & noteBody
+    on error
+      set skippedCount to skippedCount + 1
+    end try
   end repeat
-  return outputText
+  if outputText is not "" then set outputText to outputText & recordSeparator
+  return outputText & "INOTES_META" & fieldSeparator & (skippedCount as text)
 end tell
 '''
     raw = _run_osascript(script)
     links: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for record in raw.split(chr(30)):
+    records = raw.split(chr(30))
+    metadata_prefix = "INOTES_META" + chr(31)
+    if records and records[-1].startswith(metadata_prefix):
+        try:
+            skipped_count = int(records.pop().partition(metadata_prefix)[2])
+        except ValueError as exc:
+            raise NotesError("Notes returned malformed link scan metadata.") from exc
+        if skipped_count:
+            suffix = "note" if skipped_count == 1 else "notes"
+            raise NotesError(
+                f"Could not read link data from {skipped_count} {suffix}; no partial inventory was written."
+            )
+    for record in records:
         if not record:
             continue
         fields = record.split(chr(31), 2)
@@ -337,10 +545,10 @@ def update_note(
     escaped_new_title = _as_escape(new_title) if new_title is not None else None
     escaped_body = _as_escape(body) if body is not None else None
     writes = ""
-    if escaped_new_title is not None:
-        writes += f'  set name of targetNote to "{escaped_new_title}"\n'
     if escaped_body is not None:
         writes += f'  set body of targetNote to "{escaped_body}"\n'
+    if escaped_new_title is not None:
+        writes += f'  set name of targetNote to "{escaped_new_title}"\n'
 
     # Match uniquely before writing. Verify in Notes.app and then read the
     # same note back by immutable Notes ID. No retry path repeats the write.
@@ -405,70 +613,97 @@ def delete_note(title: str, folder: str | None = None) -> str:
 def _set_note_pin_state(title: str, *, pinned: bool, folder: str | None = None) -> str:
     """Set pin state through Notes.app's File menu and verify the menu state."""
     action = "Pin Note" if pinned else "Unpin Note"
-    opposite = "Unpin Note" if pinned else "Pin Note"
     changed = "PINNED" if pinned else "UNPINNED"
     already = "ALREADY_PINNED" if pinned else "ALREADY_UNPINNED"
     script = (
+        'tell application "System Events"\n'
+        '  set previousFrontmost to name of first application process whose frontmost is true\n'
+        'end tell\n'
         'tell application "Notes"\n'
         f'  {_note_matches(title, folder)}'
-        '  if (name of container of targetNote as text) is "Recently Deleted" then return "INOTES_ERROR_PIN_NOT_SUPPORTED"\n'
         '  set selection of application "Notes" to {targetNote}\n'
-        '  activate\n'
+        '  show targetNote\n'
         'end tell\n'
         'tell application "System Events"\n'
-        '  tell process "Notes"\n'
-        '    if not (exists menu bar item "File" of menu bar 1) then return "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
-        '    click menu bar item "File" of menu bar 1\n'
-        '    set fileMenu to menu 1 of menu bar item "File" of menu bar 1\n'
-        '    set canPin to false\n'
-        '    set canUnpin to false\n'
-        '    try\n'
-        '      set canPin to enabled of menu item "Pin Note" of fileMenu\n'
-        '    end try\n'
-        '    try\n'
-        '      set canUnpin to enabled of menu item "Unpin Note" of fileMenu\n'
-        '    end try\n'
+        '  set notesProcess to process "Notes"\n'
+        '  set frontmost of notesProcess to true\n'
+        '  delay 0.3\n'
+        '  set pinResult to "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
+        '  set fileMenuOpened to false\n'
+        '  try\n'
+        '    tell notesProcess\n'
+        '      if frontmost then\n'
+        '      if exists menu bar item "File" of menu bar 1 then\n'
+        '        click menu bar item "File" of menu bar 1\n'
+        '        set fileMenu to menu 1 of menu bar item "File" of menu bar 1\n'
+        '        set fileMenuOpened to true\n'
+        '        set canPin to false\n'
+        '        set canUnpin to false\n'
+        '        try\n'
+        '          set canPin to enabled of menu item "Pin Note" of fileMenu\n'
+        '        end try\n'
+        '        try\n'
+        '          set canUnpin to enabled of menu item "Unpin Note" of fileMenu\n'
+        '        end try\n'
     )
     if pinned:
         script += (
-            '    if canPin and not canUnpin then\n'
-            f'      click menu item "{action}" of fileMenu\n'
-            '      click menu bar item "File" of menu bar 1\n'
-            '      set verifyMenu to menu 1 of menu bar item "File" of menu bar 1\n'
-            '      set verifiedUnpin to false\n'
-            '      try\n'
-            '        set verifiedUnpin to enabled of menu item "Unpin Note" of verifyMenu\n'
-            '      end try\n'
-            '      key code 53\n'
-            f'      if verifiedUnpin then return "{changed}"\n'
-            '      return "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
-            '    else if canUnpin and not canPin then\n'
-            '      key code 53\n'
-            f'      return "{already}"\n'
-            '    end if\n'
+            '        if canPin and not canUnpin then\n'
+            f'          click menu item "{action}" of fileMenu\n'
+            '          delay 0.2\n'
+            '          click menu bar item "File" of menu bar 1\n'
+            '          set verifyMenu to menu 1 of menu bar item "File" of menu bar 1\n'
+            '          set verifiedUnpin to false\n'
+            '          try\n'
+            '            set verifiedUnpin to enabled of menu item "Unpin Note" of verifyMenu\n'
+            '          end try\n'
+            f'          if verifiedUnpin then set pinResult to "{changed}"\n'
+            '        else if canUnpin and not canPin then\n'
+            f'          set pinResult to "{already}"\n'
+            '        else\n'
+            '          set pinResult to "INOTES_ERROR_PIN_NOT_SUPPORTED"\n'
+            '        end if\n'
         )
     else:
         script += (
-            '    if canUnpin and not canPin then\n'
-            f'      click menu item "{action}" of fileMenu\n'
-            '      click menu bar item "File" of menu bar 1\n'
-            '      set verifyMenu to menu 1 of menu bar item "File" of menu bar 1\n'
-            '      set verifiedPin to false\n'
-            '      try\n'
-            '        set verifiedPin to enabled of menu item "Pin Note" of verifyMenu\n'
-            '      end try\n'
-            '      key code 53\n'
-            f'      if verifiedPin then return "{changed}"\n'
-            '      return "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
-            '    else if canPin and not canUnpin then\n'
-            '      key code 53\n'
-            f'      return "{already}"\n'
-            '    end if\n'
+            '        if canUnpin and not canPin then\n'
+            f'          click menu item "{action}" of fileMenu\n'
+            '          delay 0.2\n'
+            '          click menu bar item "File" of menu bar 1\n'
+            '          set verifyMenu to menu 1 of menu bar item "File" of menu bar 1\n'
+            '          set verifiedPin to false\n'
+            '          try\n'
+            '            set verifiedPin to enabled of menu item "Pin Note" of verifyMenu\n'
+            '          end try\n'
+            f'          if verifiedPin then set pinResult to "{changed}"\n'
+            '        else if canPin and not canUnpin then\n'
+            f'          set pinResult to "{already}"\n'
+            '        else\n'
+            '          set pinResult to "INOTES_ERROR_PIN_NOT_SUPPORTED"\n'
+            '        end if\n'
         )
     script += (
-        '    key code 53\n'
-        '    return "INOTES_ERROR_PIN_NOT_SUPPORTED"\n'
-        '  end tell\n'
+        '      else\n'
+        '        set pinResult to "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
+        '      end if\n'
+        '      else\n'
+        '        set pinResult to "INOTES_ERROR_PIN_UI_STATE_UNKNOWN"\n'
+        '      end if\n'
+        '    end tell\n'
+        '  on error errorMessage number errorNumber\n'
+        '    set pinResult to "INOTES_ERROR_PIN_UI:" & errorMessage\n'
+        '  end try\n'
+        '  if fileMenuOpened and frontmost of notesProcess then\n'
+        '    try\n'
+        '      key code 53\n'
+        '    end try\n'
+        '  end if\n'
+        '  if previousFrontmost is not "Notes" then\n'
+        '    try\n'
+        '      set frontmost of process previousFrontmost to true\n'
+        '    end try\n'
+        '  end if\n'
+        '  return pinResult\n'
         'end tell\n'
     )
 
@@ -481,6 +716,13 @@ def _set_note_pin_state(title: str, *, pinned: bool, folder: str | None = None) 
             f"Pin state was not confirmed: {exc}"
         ) from exc
     _raise_resolution_error(result, title)
+    if result.startswith("INOTES_ERROR_PIN_UI:"):
+        detail = result.partition(":")[2].strip()
+        raise NotesError(
+            "Notes pinning uses UI scripting. Allow your terminal to control Notes and System Events "
+            "in Privacy & Security > Automation, and enable it under Accessibility. "
+            f"Pin state was not confirmed: {detail}"
+        )
     if result == "INOTES_ERROR_PIN_NOT_SUPPORTED":
         raise NotesError(
             "This note cannot be pinned here. Notes does not support pinning Recently Deleted notes "

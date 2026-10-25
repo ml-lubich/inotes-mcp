@@ -22,9 +22,12 @@ inotes update
 
 ## macOS only
 
-`inotes` drives **Notes.app** through AppleScript (`osascript`), which only
-exists on macOS. There is no Linux or Windows build, and none is planned —
-the tool has nothing to talk to without Notes.app.
+`inotes` uses **Notes.app** through AppleScript (`osascript`) on macOS. For
+the all-notes link inventory, it first reads the local Notes database in
+read-only mode for speed, then falls back to AppleScript if that database
+layout is unavailable. It never writes to the Notes database. There is no
+Linux or Windows build, and none is planned — the tool has nothing to talk to
+without Notes.app.
 
 ---
 
@@ -101,8 +104,9 @@ does not toggle it back. AppleScript does not expose a pin property, so these
 commands select the note and use Notes.app's **File → Pin Note** menu through
 System Events. This requires UI scripting access: allow the terminal to control
 Notes and System Events in Automation settings, and enable the terminal under
-**System Settings → Privacy & Security → Accessibility**. Pinning is supported
-for upgraded iCloud notes and notes stored on the Mac; Recently Deleted notes
+**System Settings → Privacy & Security → Accessibility**. The command briefly
+brings Notes forward for its menu, then restores the app that was frontmost.
+Pinning is supported for upgraded iCloud notes and notes stored on the Mac; Recently Deleted notes
 cannot be pinned. A missing permission or unavailable menu action is an error,
 not a success. See [Apple's pinning guide](https://support.apple.com/en-euro/guide/notes/apdb54e469b6/mac).
 
@@ -114,9 +118,11 @@ Use `attachments` to list attachment names and IDs for one note.
 
 `links` is the only command that scans every note body. It extracts external
 hyperlinks and plain HTTP(S) URLs, returning the source note title, link label,
-and URL without including note bodies or following links. A report can contain
-private URLs; `--output` writes it to a file with owner-only permissions. No
-report is created unless that option is supplied.
+and URL without including note bodies or following links. On the standard
+macOS Notes store it uses a read-only SQLite fast path; other layouts use the
+slower AppleScript fallback. A report can contain private URLs; `--output`
+writes it to a file with owner-only permissions. No report is created unless
+that option is supplied.
 
 ---
 
